@@ -13,7 +13,7 @@ import tensorflow as tf
 from sklearn.metrics import confusion_matrix, f1_score
 
 from deepsleep.data_loader import NonSeqDataLoader, SeqDataLoader
-from deepsleep.model import DeepFeatureNet, DeepSleepNet
+from deepsleep.model import DeepFeatureNet, MultiChannelDeepFeatureNet, DeepSleepNet
 from deepsleep.optimize import adam, adam_clipping_list_lr
 from deepsleep.utils import iterate_minibatches, iterate_batch_seq_minibatches
 
@@ -129,11 +129,12 @@ class DeepFeatureNetTrainer(Trainer):
     def __init__(
         self, 
         data_dir, 
-        output_dir, 
+        output_dir,
         n_folds, 
         fold_idx, 
         batch_size, 
-        input_dims, 
+        input_dims,
+        n_channels,
         n_classes,
         interval_plot_filter=50,
         interval_save_model=100,
@@ -151,6 +152,7 @@ class DeepFeatureNetTrainer(Trainer):
         self.fold_idx = fold_idx
         self.batch_size = batch_size
         self.input_dims = input_dims
+        self.n_channels = n_channels
         self.n_classes = n_classes
 
     def _run_epoch(self, sess, network, inputs, targets, train_op, is_train):
@@ -216,18 +218,20 @@ class DeepFeatureNetTrainer(Trainer):
     def train(self, n_epochs, resume):
         with tf.Graph().as_default(), tf.compat.v1.Session() as sess:
             # Build training and validation networks
-            train_net = DeepFeatureNet(
+            train_net = MultiChannelDeepFeatureNet(
                 batch_size=self.batch_size, 
-                input_dims=self.input_dims, 
+                input_dims=self.input_dims,
+                n_channels=self.n_channels,
                 n_classes=self.n_classes, 
                 is_train=True,
                 reuse_params=False, 
                 use_dropout=True
             )
-            valid_net = DeepFeatureNet(
+            valid_net = MultiChannelDeepFeatureNet(
                 batch_size=self.batch_size, 
-                input_dims=self.input_dims, 
-                n_classes=self.n_classes, 
+                input_dims=self.input_dims,
+                n_channels=self.n_channels,
+                n_classes=self.n_classes,
                 is_train=False,
                 reuse_params=True, 
                 use_dropout=True
@@ -451,7 +455,8 @@ class DeepSleepNetTrainer(Trainer):
         n_folds, 
         fold_idx, 
         batch_size, 
-        input_dims, 
+        input_dims,
+        n_channels,
         n_classes,
         seq_length,
         n_rnn_layers,
@@ -472,6 +477,7 @@ class DeepSleepNetTrainer(Trainer):
         self.fold_idx = fold_idx
         self.batch_size = batch_size
         self.input_dims = input_dims
+        self.n_channels = n_channels
         self.n_classes = n_classes
         self.seq_length = seq_length
         self.n_rnn_layers = n_rnn_layers
@@ -547,7 +553,8 @@ class DeepSleepNetTrainer(Trainer):
             # Build training and validation networks
             train_net = DeepSleepNet(
                 batch_size=self.batch_size, 
-                input_dims=self.input_dims, 
+                input_dims=self.input_dims,
+                n_channels=self.n_channels,
                 n_classes=self.n_classes, 
                 seq_length=self.seq_length,
                 n_rnn_layers=self.n_rnn_layers,
@@ -559,7 +566,8 @@ class DeepSleepNetTrainer(Trainer):
             )
             valid_net = DeepSleepNet(
                 batch_size=self.batch_size, 
-                input_dims=self.input_dims, 
+                input_dims=self.input_dims,
+                n_channels=self.n_channels,
                 n_classes=self.n_classes, 
                 seq_length=self.seq_length,
                 n_rnn_layers=self.n_rnn_layers,

@@ -115,8 +115,8 @@ class NonSeqDataLoader(object):
         # Reshape the data to match the input of the model - conv2d
         data_train = np.squeeze(data_train)
         data_val = np.squeeze(data_val)
-        data_train = data_train[:, :, np.newaxis, np.newaxis]
-        data_val = data_val[:, :, np.newaxis, np.newaxis]
+        data_train = data_train[:, :, :, np.newaxis]
+        data_val = data_val[:, :, :, np.newaxis]
 
         # Casting
         data_train = data_train.astype(np.float32)
@@ -208,7 +208,7 @@ class SeqDataLoader(object):
 
             # Reshape the data to match the input of the model - conv2d
             tmp_data = np.squeeze(tmp_data)
-            tmp_data = tmp_data[:, :, np.newaxis, np.newaxis]
+            tmp_data = tmp_data[:, :, :, np.newaxis]
             
             # # Reshape the data to match the input of the model - conv1d
             # tmp_data = tmp_data[:, :, np.newaxis]
@@ -351,7 +351,7 @@ class SeqDataLoader(object):
 
                 # Reshape the data to match the input of the model - conv2d
                 tmp_data = np.squeeze(tmp_data)
-                tmp_data = tmp_data[:, :, np.newaxis, np.newaxis]
+                tmp_data = tmp_data[:, :, :, np.newaxis]
                 
                 # # Reshape the data to match the input of the model - conv1d
                 # tmp_data = tmp_data[:, :, np.newaxis]

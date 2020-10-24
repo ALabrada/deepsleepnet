@@ -2,12 +2,13 @@ import tensorflow as tf
 
 from deepsleep.nn import *
 
+
 class DeepFeatureNet(object):
 
     def __init__(
         self, 
         batch_size, 
-        input_dims, 
+        input_dims,
         n_classes, 
         is_train, 
         reuse_params, 
@@ -221,12 +222,86 @@ class DeepFeatureNet(object):
             self.pred_op = tf.argmax(self.logits, 1)
 
 
-class DeepSleepNet(DeepFeatureNet):
+class MultiChannelDeepFeatureNet(DeepFeatureNet):
+
+    def __init__(
+            self,
+            batch_size,
+            input_dims,
+            n_channels,
+            n_classes,
+            is_train,
+            reuse_params,
+            use_dropout,
+            name="deepfeaturenet"
+    ):
+        super(MultiChannelDeepFeatureNet, self).__init__(
+            batch_size=batch_size,
+            input_dims=input_dims,
+            n_classes=n_classes,
+            is_train=is_train,
+            reuse_params=reuse_params,
+            use_dropout=use_dropout,
+            name=name
+        )
+
+        self.n_channels = n_channels
+
+    def _build_placeholder(self):
+        # Input
+        name = "x_train" if self.is_train else "x_valid"
+        self.input_var = tf.compat.v1.placeholder(
+            tf.float32,
+            shape=[self.batch_size, self.input_dims, self.n_channels, 1],
+            name=name + "_inputs"
+        )
+        # Target
+        self.target_var = tf.compat.v1.placeholder(
+            tf.int32,
+            shape=[self.batch_size, ],
+            name=name + "_targets"
+        )
+
+    def build_model(self, input_var):
+        output_conns = []
+
+        for channel in range(self.n_channels):
+            input = input_var[:, :, channel, np.newaxis]
+
+            # Create a network with superclass method
+            network = super(MultiChannelDeepFeatureNet, self).build_model(
+                input_var=input
+            )
+            output_conns.append(network)
+
+        ######### Aggregate and link the channel CNNs #########
+
+        # Concat
+        name = "l{}_concat".format(self.layer_idx)
+        network = tf.concat(axis=1, values=output_conns, name=name)
+        self.activations.append((name, network))
+        self.layer_idx += 1
+
+        # Dropout
+        if self.use_dropout:
+            name = "l{}_dropout".format(self.layer_idx)
+            if self.is_train:
+                network = tf.nn.dropout(network, keep_prob=0.5, name=name)
+            else:
+                network = tf.nn.dropout(network, keep_prob=1.0, name=name)
+            self.activations.append((name, network))
+        self.layer_idx += 1
+
+        return network
+
+
+class DeepSleepNet(MultiChannelDeepFeatureNet):
 
     def __init__(
         self, 
         batch_size, 
-        input_dims, 
+        input_dims,
+        n_channels,
         n_classes, 
         seq_length,
         n_rnn_layers,
@@ -237,9 +312,10 @@ class DeepSleepNet(DeepFeatureNet):
         use_dropout_sequence,
         name="deepsleepnet"
     ):
-        super(self.__class__, self).__init__(
+        super(DeepSleepNet, self).__init__(
             batch_size=batch_size, 
-            input_dims=input_dims, 
+            input_dims=input_dims,
+            n_channels=n_channels,
             n_classes=n_classes, 
             is_train=is_train, 
             reuse_params=reuse_params, 
@@ -258,7 +334,7 @@ class DeepSleepNet(DeepFeatureNet):
         name = "x_train" if self.is_train else "x_valid"
         self.input_var = tf.compat.v1.placeholder(
             tf.float32, 
-            shape=[self.batch_size*self.seq_length, self.input_dims, 1, 1],
+            shape=[self.batch_size*self.seq_length, self.input_dims, self.n_channels, 1],
             name=name + "_inputs"
         )
         # Target
@@ -270,7 +346,7 @@ class DeepSleepNet(DeepFeatureNet):
 
     def build_model(self, input_var):
         # Create a network with superclass method
-        network = super(self.__class__, self).build_model(
+        network = super(DeepSleepNet, self).build_model(
             input_var=self.input_var
         )
 

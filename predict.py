@@ -31,6 +31,8 @@ tf.app.flags.DEFINE_string('data_dir', 'data',
                            """Directory where to load training data.""")
 tf.app.flags.DEFINE_string('model_dir', 'output',
                            """Directory where to load trained models.""")
+tf.app.flags.DEFINE_integer('n_channels', 1,
+                           """Number of input channels.""")
 tf.app.flags.DEFINE_string('output_dir', 'output',
                            """Directory where to save outputs.""")
 
@@ -337,7 +339,8 @@ class CustomDeepSleepNet(DeepSleepNet):
     def __init__(
         self, 
         batch_size, 
-        input_dims, 
+        input_dims,
+        n_channels,
         n_classes, 
         seq_length,
         n_rnn_layers,
@@ -350,7 +353,8 @@ class CustomDeepSleepNet(DeepSleepNet):
     ):
         super(DeepSleepNet, self).__init__(
             batch_size=batch_size, 
-            input_dims=input_dims, 
+            input_dims=input_dims,
+            n_channels=n_channels,
             n_classes=n_classes, 
             is_train=is_train, 
             reuse_params=reuse_params, 
@@ -589,7 +593,8 @@ def custom_run_epoch(
 
 def predict(
     data_dir, 
-    model_dir, 
+    model_dir,
+    n_channels,
     output_dir, 
     n_subjects, 
     n_subjects_per_fold
@@ -603,7 +608,8 @@ def predict(
         # Build the network
         valid_net = CustomDeepSleepNet(
             batch_size=1, 
-            input_dims=EPOCH_SEC_LEN*100, 
+            input_dims=EPOCH_SEC_LEN*100,
+            n_channels=n_channels,
             n_classes=NUM_CLASSES, 
             seq_length=25,
             n_rnn_layers=2,
@@ -625,6 +631,9 @@ def predict(
                 "fold{}".format(fold_idx), 
                 "deepsleepnet"
             )
+
+            if not os.path.exists(checkpoint_path):
+                continue
 
             # Restore the trained model
             saver = tf.compat.v1.train.Saver()
@@ -695,6 +704,7 @@ def main(argv=None):
     predict(
         data_dir=FLAGS.data_dir,
         model_dir=FLAGS.model_dir,
+        n_channels=FLAGS.n_channels,
         output_dir=FLAGS.output_dir,
         n_subjects=n_subjects,
         n_subjects_per_fold=n_subjects_per_fold

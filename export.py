@@ -15,7 +15,7 @@ FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_integer('fold_idx', 0,
                             """Index of cross-validation fold to export.""")
 
-def export(model_dir, fold_idx, output_dir):
+def export(model_dir, fold_idx, output_dir, n_channels=1):
     export_path = os.path.join(
         tf.compat.as_bytes(output_dir),
         tf.compat.as_bytes("fold{}".format(fold_idx)),
@@ -26,6 +26,7 @@ def export(model_dir, fold_idx, output_dir):
         network = CustomDeepSleepNet(
             batch_size=1,
             input_dims=EPOCH_SEC_LEN * 100,
+            n_channels=n_channels,
             n_classes=NUM_CLASSES,
             seq_length=25,
             n_rnn_layers=2,
@@ -113,7 +114,8 @@ def main(argv=None):
     export(
         model_dir=FLAGS.model_dir,
         fold_idx=FLAGS.fold_idx,
-        output_dir=FLAGS.output_dir
+        output_dir=FLAGS.output_dir,
+        n_channels=FLAGS.n_channels
     )
 
 

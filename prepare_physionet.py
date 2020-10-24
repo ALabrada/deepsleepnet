@@ -75,7 +75,7 @@ def main():
         os.makedirs(args.output_dir)
 
     # Select channel
-    select_ch = args.select_ch
+    select_ch = args.select_ch.split(";")
 
     # Read raw and annotation EDF files
     psg_fnames = glob.glob(os.path.join(args.data_dir, "*PSG.edf"))
@@ -91,9 +91,11 @@ def main():
 
         raw = read_raw_edf(psg_fnames[i], preload=True, stim_channel=None)
         sampling_rate = raw.info['sfreq']
-        raw_ch_df = raw.to_data_frame(scaling_time=100.0)[select_ch]
-        raw_ch_df = raw_ch_df.to_frame()
-        raw_ch_df.set_index(np.arange(len(raw_ch_df)))
+        raw_ch_df = raw.to_data_frame(scaling_time=100.0)
+        samp_count, chan_count = raw_ch_df.shape
+        raw_ch_df = [raw_ch_df[c].to_frame() for c in select_ch]
+        for c in raw_ch_df:
+            c.set_index(np.arange(samp_count))
 
         # Get raw header
         f = open(psg_fnames[i], 'r', encoding='iso-8859-1')
@@ -113,7 +115,7 @@ def main():
         ann_start_dt = datetime.strptime(h_ann['date_time'], "%Y-%m-%d %H:%M:%S")
 
         # Assert that raw and annotation files start at the same time
-        assert raw_start_dt == ann_start_dt
+        # assert raw_start_dt == ann_start_dt
 
         # Generate label and remove indices
         remove_idx = []    # indicies of the data that will be removed
@@ -144,12 +146,12 @@ def main():
                 ))
         labels = np.hstack(labels)
         
-        print("before remove unwanted: {}".format(np.arange(len(raw_ch_df)).shape))
+        print("before remove unwanted: {}".format(np.arange(samp_count).shape))
         if len(remove_idx) > 0:
             remove_idx = np.hstack(remove_idx)
-            select_idx = np.setdiff1d(np.arange(len(raw_ch_df)), remove_idx)
+            select_idx = np.setdiff1d(np.arange(samp_count), remove_idx)
         else:
-            select_idx = np.arange(len(raw_ch_df))
+            select_idx = np.arange(samp_count)
         print("after remove unwanted: {}".format(select_idx.shape))
 
         # Select only the data with labels
@@ -171,7 +173,12 @@ def main():
             print("after remove extra labels: {}, {}".format(select_idx.shape, labels.shape))
 
         # Remove movement and unknown stages if any
-        raw_ch = raw_ch_df.values[select_idx]
+        raw_ch = np.zeros((len(select_idx), len(raw_ch_df)), dtype=np.float32)
+        for j, c in enumerate(raw_ch_df):
+            raw_ch[:, j] = c.values[select_idx].reshape(len(select_idx)).astype(np.float32)
+
+        if len(raw_ch) == 0:
+            continue
 
         # Verify that we can split into 30-s epochs
         if len(raw_ch) % (EPOCH_SEC_SIZE * sampling_rate) != 0:
