@@ -1,5 +1,6 @@
 import os
 import tensorflow as tf
+from tensorflow.python.tools import freeze_graph
 
 from deepsleep.data_loader import SeqDataLoader
 from deepsleep.model import DeepSleepNet
@@ -98,6 +99,23 @@ def export(model_dir, fold_idx, output_dir, n_channels=1):
             strip_default_attrs=True)
 
         builder.save()
+
+        freeze_graph.freeze_graph(
+            input_graph=None,
+            input_saver=False,
+            input_binary=False,
+            input_checkpoint=None,
+            output_node_names=",".join(map(lambda n: n.name.split(sep=':')[0], output_dict.values())),
+            restore_op_name=None,
+            filename_tensor_name=None,
+            output_graph=os.path.join(tf.compat.as_bytes(output_dir), b'model.pb'),
+            clear_devices=True,
+            initializer_nodes="",
+            variable_names_whitelist="",
+            variable_names_blacklist="",
+            input_meta_graph=False,
+            input_saved_model_dir=export_path,
+            saved_model_tags=tf.compat.v1.saved_model.tag_constants.SERVING)
 
 
 def main(argv=None):
