@@ -10,7 +10,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix, f1_score, cohen_kappa_score
 
 from deepsleep.data_loader import NonSeqDataLoader, SeqDataLoader
 from deepsleep.model import DeepFeatureNet, MultiChannelDeepFeatureNet, DeepSleepNet
@@ -39,8 +39,8 @@ class Trainer(object):
     def print_performance(self, sess, output_dir, network_name,
                            n_train_examples, n_valid_examples,
                            train_cm, valid_cm, epoch, n_epochs,
-                           train_duration, train_loss, train_acc, train_f1,
-                           valid_duration, valid_loss, valid_acc, valid_f1):
+                           train_duration, train_loss, train_acc, train_f1, train_kappa,
+                           valid_duration, valid_loss, valid_acc, valid_f1, valid_kappa):
         # Get regularization loss
         train_reg_loss = tf.add_n(tf.compat.v1.get_collection("losses", scope=network_name + "\/"))
         train_reg_loss_value = sess.run(train_reg_loss)
@@ -54,19 +54,19 @@ class Trainer(object):
             ))
             print((
                 "train ({:.3f} sec): n={}, loss={:.3f} ({:.3f}), acc={:.3f}, "
-                "f1={:.3f}".format(
+                "f1={:.3f}, kappa={:.3f}".format(
                     train_duration, n_train_examples,
                     train_loss, train_reg_loss_value,
-                    train_acc, train_f1
+                    train_acc, train_f1, train_kappa
                 )
             ))
             print(train_cm)
             print((
                 "valid ({:.3f} sec): n={}, loss={:.3f} ({:.3f}), acc={:.3f}, "
-                "f1={:.3f}".format(
+                "f1={:.3f}, kappa={:.3f}".format(
                     valid_duration, n_valid_examples,
                     valid_loss, valid_reg_loss_value,
-                    valid_acc, valid_f1
+                    valid_acc, valid_f1, valid_kappa
                 )
             ))
             print(valid_cm)
@@ -75,16 +75,16 @@ class Trainer(object):
             print((
                 "epoch {}: "
                 "train ({:.2f} sec): n={}, loss={:.3f} ({:.3f}), "
-                "acc={:.3f}, f1={:.3f} | "
+                "acc={:.3f}, f1={:.3f}, kappa={:.3f} | "
                 "valid ({:.2f} sec): n={}, loss={:.3f} ({:.3f}), "
-                "acc={:.3f}, f1={:.3f}".format(
+                "acc={:.3f}, f1={:.3f}, kappa={:.3f}".format(
                     epoch+1,
                     train_duration, n_train_examples,
                     train_loss, train_reg_loss_value,
-                    train_acc, train_f1,
+                    train_acc, train_f1, train_kappa,
                     valid_duration, n_valid_examples,
                     valid_loss, valid_reg_loss_value,
-                    valid_acc, valid_f1
+                    valid_acc, valid_f1, valid_kappa
                 )
             ))
 
@@ -255,7 +255,7 @@ class DeepFeatureNetTrainer(Trainer):
             # Define optimization operations
             train_op, grads_and_vars_op = adam(
                 loss=train_net.loss_op,
-                lr=1e-4,
+                lr=1e-5,
                 train_vars=tf.compat.v1.trainable_variables()
             )
 
@@ -316,9 +316,11 @@ class DeepFeatureNetTrainer(Trainer):
                 all_train_loss = np.zeros(n_epochs)
                 all_train_acc = np.zeros(n_epochs)
                 all_train_f1 = np.zeros(n_epochs)
+                all_train_kappa = np.zeros(n_epochs)
                 all_valid_loss = np.zeros(n_epochs)
                 all_valid_acc = np.zeros(n_epochs)
                 all_valid_f1 = np.zeros(n_epochs)
+                all_valid_kappa = np.zeros(n_epochs)
 
             # Loop each epoch
             for epoch in range(sess.run(global_step), n_epochs):
@@ -345,6 +347,7 @@ class DeepFeatureNetTrainer(Trainer):
                 train_cm = confusion_matrix(y_true_train, y_pred_train)
                 train_acc = np.mean(y_true_train == y_pred_train)
                 train_f1 = f1_score(y_true_train, y_pred_train, average="macro")
+                train_kappa = cohen_kappa_score(y_true_train, y_pred_train)
 
                 # # MONITORING
                 # print "AFTER TRAINING and BEFORE VALID"
@@ -365,6 +368,7 @@ class DeepFeatureNetTrainer(Trainer):
                 valid_cm = confusion_matrix(y_true_val, y_pred_val)
                 valid_acc = np.mean(y_true_val == y_pred_val)
                 valid_f1 = f1_score(y_true_val, y_pred_val, average="macro")
+                valid_kappa = cohen_kappa_score(y_true_val, y_pred_val)
 
                 # db.train_log(args={
                 #     "n_folds": self.n_folds,
@@ -388,17 +392,19 @@ class DeepFeatureNetTrainer(Trainer):
                 all_train_loss[epoch] = train_loss
                 all_train_acc[epoch] = train_acc
                 all_train_f1[epoch] = train_f1
+                all_train_kappa[epoch] = train_kappa
                 all_valid_loss[epoch] = valid_loss
                 all_valid_acc[epoch] = valid_acc
                 all_valid_f1[epoch] = valid_f1
+                all_valid_kappa[epoch] = valid_kappa
 
                 # Report performance
                 self.print_performance(
                     sess, output_dir, train_net.name,
                     n_train_examples, n_valid_examples,
                     train_cm, valid_cm, epoch, n_epochs,
-                    train_duration, train_loss, train_acc, train_f1,
-                    valid_duration, valid_loss, valid_acc, valid_f1
+                    train_duration, train_loss, train_acc, train_f1, train_kappa,
+                    valid_duration, valid_loss, valid_acc, valid_f1, valid_kappa
                 )
 
                 # Save performance history
@@ -407,6 +413,7 @@ class DeepFeatureNetTrainer(Trainer):
                     train_loss=all_train_loss, valid_loss=all_valid_loss,
                     train_acc=all_train_acc, valid_acc=all_valid_acc,
                     train_f1=all_train_f1, valid_f1=all_valid_f1,
+                    train_kappa=all_train_kappa, valid_kappa=all_valid_kappa,
                     y_true_val=np.asarray(y_true_val),
                     y_pred_val=np.asarray(y_pred_val)
                 )
@@ -609,7 +616,7 @@ class DeepSleepNetTrainer(Trainer):
             # Optimizer that use different learning rates for each part of the network
             train_op, grads_and_vars_op = adam_clipping_list_lr(
                 loss=train_net.loss_op,
-                list_lrs=[1e-6, 1e-4],
+                list_lrs=[1e-6, 1e-5],
                 list_train_vars=[train_vars1, train_vars2],
                 clip_value=10.0
             )
@@ -705,9 +712,11 @@ class DeepSleepNetTrainer(Trainer):
                 all_train_loss = np.zeros(n_epochs)
                 all_train_acc = np.zeros(n_epochs)
                 all_train_f1 = np.zeros(n_epochs)
+                all_train_kappa = np.zeros(n_epochs)
                 all_valid_loss = np.zeros(n_epochs)
                 all_valid_acc = np.zeros(n_epochs)
                 all_valid_f1 = np.zeros(n_epochs)
+                all_valid_kappa = np.zeros(n_epochs)
 
             # Loop each epoch
             for epoch in range(sess.run(global_step), n_epochs):
@@ -723,6 +732,7 @@ class DeepSleepNetTrainer(Trainer):
                 train_cm = confusion_matrix(y_true_train, y_pred_train)
                 train_acc = np.mean(y_true_train == y_pred_train)
                 train_f1 = f1_score(y_true_train, y_pred_train, average="macro")
+                train_kappa = cohen_kappa_score(y_true_train, y_pred_train)
 
                 # Evaluate the model on the validation set
                 y_true_val, y_pred_val, valid_loss, valid_duration = \
@@ -736,13 +746,16 @@ class DeepSleepNetTrainer(Trainer):
                 valid_cm = confusion_matrix(y_true_val, y_pred_val)
                 valid_acc = np.mean(y_true_val == y_pred_val)
                 valid_f1 = f1_score(y_true_val, y_pred_val, average="macro")
+                valid_kappa = cohen_kappa_score(y_true_val, y_pred_val)
 
                 all_train_loss[epoch] = train_loss
                 all_train_acc[epoch] = train_acc
                 all_train_f1[epoch] = train_f1
+                all_train_kappa[epoch] = train_kappa
                 all_valid_loss[epoch] = valid_loss
                 all_valid_acc[epoch] = valid_acc
                 all_valid_f1[epoch] = valid_f1
+                all_valid_kappa[epoch] = valid_kappa
 
                 # db.train_log(args={
                 #     "n_folds": self.n_folds,
@@ -768,8 +781,8 @@ class DeepSleepNetTrainer(Trainer):
                     sess, output_dir, train_net.name,
                     n_train_examples, n_valid_examples,
                     train_cm, valid_cm, epoch, n_epochs,
-                    train_duration, train_loss, train_acc, train_f1,
-                    valid_duration, valid_loss, valid_acc, valid_f1
+                    train_duration, train_loss, train_acc, train_f1, train_kappa,
+                    valid_duration, valid_loss, valid_acc, valid_f1, valid_kappa
                 )
 
                 # Save performance history
@@ -778,6 +791,7 @@ class DeepSleepNetTrainer(Trainer):
                     train_loss=all_train_loss, valid_loss=all_valid_loss,
                     train_acc=all_train_acc, valid_acc=all_valid_acc,
                     train_f1=all_train_f1, valid_f1=all_valid_f1,
+                    train_kappa=all_train_kappa, valid_kappa=all_valid_kappa,
                     y_true_val=np.asarray(y_true_val),
                     y_pred_val=np.asarray(y_pred_val)
                 )

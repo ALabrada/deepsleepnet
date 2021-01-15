@@ -9,7 +9,7 @@ import tensorflow as tf
 
 from datetime import datetime
 
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix, f1_score, cohen_kappa_score
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import math_ops
@@ -37,7 +37,7 @@ tf.app.flags.DEFINE_string('output_dir', 'output',
                            """Directory where to save outputs.""")
 
 
-def print_performance(sess, network_name, n_examples, duration, loss, cm, acc, f1):
+def print_performance(sess, network_name, n_examples, duration, loss, cm, acc, f1, kappa):
     # Get regularization loss
     reg_loss = tf.add_n(tf.compat.v1.get_collection("losses", scope=network_name + "\/"))
     reg_loss_value = sess.run(reg_loss)
@@ -45,8 +45,8 @@ def print_performance(sess, network_name, n_examples, duration, loss, cm, acc, f
     # Print performance
     print((
         "duration={:.3f} sec, n={}, loss={:.3f} ({:.3f}), acc={:.3f}, "
-        "f1={:.3f}".format(
-            duration, n_examples, loss, reg_loss_value, acc, f1
+        "f1={:.3f}, kappa={:.3f}".format(
+            duration, n_examples, loss, reg_loss_value, acc, f1, kappa
         )
     ))
     print(cm)
@@ -663,12 +663,13 @@ def predict(
             cm_ = confusion_matrix(y_true_, y_pred_)
             acc_ = np.mean(y_true_ == y_pred_)
             mf1_ = f1_score(y_true_, y_pred_, average="macro")
+            kappa_ = cohen_kappa_score(y_true, y_pred)
 
             # Report performance
             print_performance(
                 sess, valid_net.name,
                 n_examples, duration, loss, 
-                cm_, acc_, mf1_
+                cm_, acc_, mf1_, kappa_
             )
 
             y_true.extend(y_true_)
@@ -682,9 +683,10 @@ def predict(
     cm = confusion_matrix(y_true, y_pred)
     acc = np.mean(y_true == y_pred)
     mf1 = f1_score(y_true, y_pred, average="macro")
+    kappa = cohen_kappa_score(y_true, y_pred)
     print((
-        "n={}, acc={:.3f}, f1={:.3f}".format(
-            n_examples, acc, mf1
+        "n={}, acc={:.3f}, f1={:.3f}, kappa={:.3f}".format(
+            n_examples, acc, mf1, kappa
         )
     ))
     print(cm)

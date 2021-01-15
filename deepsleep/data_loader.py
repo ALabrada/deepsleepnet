@@ -58,8 +58,8 @@ class NonSeqDataLoader(object):
         # Reshape the data to match the input of the model - conv2d
         data_train = np.squeeze(data_train)
         data_val = np.squeeze(data_val)
-        data_train = data_train[:, :, np.newaxis, np.newaxis]
-        data_val = data_val[:, :, np.newaxis, np.newaxis]
+        data_train = data_train[:, :, :, np.newaxis]
+        data_val = data_val[:, :, :, np.newaxis]
 
         # Casting
         data_train = data_train.astype(np.float32)
@@ -78,51 +78,53 @@ class NonSeqDataLoader(object):
                 npzfiles.append(os.path.join(self.data_dir, f))
         npzfiles.sort()
 
-        if n_files is not None:
-            npzfiles = npzfiles[:n_files]
+        # if n_files is not None:
+        #     npzfiles = npzfiles[:n_files]
+        #
+        # subject_files = []
+        # for idx, f in enumerate(allfiles):
+        #     if self.fold_idx < 10:
+        #         pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]E0\.npz$".format(self.fold_idx))
+        #     else:
+        #         pattern = re.compile("[a-zA-Z0-9]*{}[1-9]E0\.npz$".format(self.fold_idx))
+        #     if pattern.match(f):
+        #         subject_files.append(os.path.join(self.data_dir, f))
+        #
+        # if len(subject_files) == 0:
+        #     for idx, f in enumerate(allfiles):
+        #         if self.fold_idx < 10:
+        #             pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]J0\.npz$".format(self.fold_idx))
+        #         else:
+        #             pattern = re.compile("[a-zA-Z0-9]*{}[1-9]J0\.npz$".format(self.fold_idx))
+        #         if pattern.match(f):
+        #             subject_files.append(os.path.join(self.data_dir, f))
+        #
+        # train_files = list(set(npzfiles) - set(subject_files))
+        # train_files.sort()
+        # subject_files.sort()
+        #
+        # # Load training and validation sets
+        # print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
+        # print("Load training set:")
+        # data_train, label_train = self._load_npz_list_files(npz_files=train_files)
+        # print(" ")
+        # print("Load validation set:")
+        # data_val, label_val = self._load_npz_list_files(npz_files=subject_files)
+        # print(" ")
 
-        subject_files = []
-        for idx, f in enumerate(allfiles):
-            if self.fold_idx < 10:
-                pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]E0\.npz$".format(self.fold_idx))
-            else:
-                pattern = re.compile("[a-zA-Z0-9]*{}[1-9]E0\.npz$".format(self.fold_idx))
-            if pattern.match(f):
-                subject_files.append(os.path.join(self.data_dir, f))
+        # # Reshape the data to match the input of the model - conv2d
+        # data_train = np.squeeze(data_train)
+        # data_val = np.squeeze(data_val)
+        # data_train = data_train[:, :, :, np.newaxis]
+        # data_val = data_val[:, :, :, np.newaxis]
+        #
+        # # Casting
+        # data_train = data_train.astype(np.float32)
+        # label_train = label_train.astype(np.int32)
+        # data_val = data_val.astype(np.float32)
+        # label_val = label_val.astype(np.int32)
 
-        if len(subject_files) == 0:
-            for idx, f in enumerate(allfiles):
-                if self.fold_idx < 10:
-                    pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]J0\.npz$".format(self.fold_idx))
-                else:
-                    pattern = re.compile("[a-zA-Z0-9]*{}[1-9]J0\.npz$".format(self.fold_idx))
-                if pattern.match(f):
-                    subject_files.append(os.path.join(self.data_dir, f))
-
-        train_files = list(set(npzfiles) - set(subject_files))
-        train_files.sort()
-        subject_files.sort()
-
-        # Load training and validation sets
-        print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
-        print("Load training set:")
-        data_train, label_train = self._load_npz_list_files(npz_files=train_files)
-        print(" ")
-        print("Load validation set:")
-        data_val, label_val = self._load_npz_list_files(npz_files=subject_files)
-        print(" ")
-
-        # Reshape the data to match the input of the model - conv2d
-        data_train = np.squeeze(data_train)
-        data_val = np.squeeze(data_val)
-        data_train = data_train[:, :, :, np.newaxis]
-        data_val = data_val[:, :, :, np.newaxis]
-
-        # Casting
-        data_train = data_train.astype(np.float32)
-        label_train = label_train.astype(np.int32)
-        data_val = data_val.astype(np.float32)
-        label_val = label_val.astype(np.int32)
+        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
 
         print("Training set: {}, {}".format(data_train.shape, label_train.shape))
         print_n_samples_each_class(label_train)
@@ -152,28 +154,30 @@ class NonSeqDataLoader(object):
                 npzfiles.append(os.path.join(self.data_dir, f))
         npzfiles.sort()
 
-        subject_files = []
-        for idx, f in enumerate(allfiles):
-            if self.fold_idx < 10:
-                pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]E0\.npz$".format(self.fold_idx))
-            else:
-                pattern = re.compile("[a-zA-Z0-9]*{}[1-9]E0\.npz$".format(self.fold_idx))
-            if pattern.match(f):
-                subject_files.append(os.path.join(self.data_dir, f))
-        subject_files.sort()
+        # subject_files = []
+        # for idx, f in enumerate(allfiles):
+        #     if self.fold_idx < 10:
+        #         pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]E0\.npz$".format(self.fold_idx))
+        #     else:
+        #         pattern = re.compile("[a-zA-Z0-9]*{}[1-9]E0\.npz$".format(self.fold_idx))
+        #     if pattern.match(f):
+        #         subject_files.append(os.path.join(self.data_dir, f))
+        # subject_files.sort()
+        #
+        # print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
+        #
+        # print("Load validation set:")
+        # data_val, label_val = self._load_npz_list_files(subject_files)
 
-        print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
+        # # Reshape the data to match the input of the model
+        # data_val = np.squeeze(data_val)
+        # data_val = data_val[:, :, np.newaxis, np.newaxis]
+        #
+        # # Casting
+        # data_val = data_val.astype(np.float32)
+        # label_val = label_val.astype(np.int32)
 
-        print("Load validation set:")
-        data_val, label_val = self._load_npz_list_files(subject_files)
-
-        # Reshape the data to match the input of the model
-        data_val = np.squeeze(data_val)
-        data_val = data_val[:, :, np.newaxis, np.newaxis]
-
-        # Casting
-        data_val = data_val.astype(np.float32)
-        label_val = label_val.astype(np.int32)
+        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
 
         return data_val, label_val
 
@@ -247,14 +251,16 @@ class SeqDataLoader(object):
                 npzfiles.append(os.path.join(self.data_dir, f))
         npzfiles.sort()
 
-        # Files for validation sets
-        val_files = np.array_split(npzfiles, self.n_folds)
-        val_files = val_files[self.fold_idx]
+        # # Files for validation sets
+        # val_files = np.array_split(npzfiles, self.n_folds)
+        # val_files = val_files[self.fold_idx]
+        #
+        # print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
+        #
+        # print("Load validation set:")
+        # data_val, label_val = self._load_npz_list_files(val_files)
 
-        print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
-
-        print("Load validation set:")
-        data_val, label_val = self._load_npz_list_files(val_files)
+        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
 
         return data_val, label_val
 
@@ -270,27 +276,29 @@ class SeqDataLoader(object):
         if n_files is not None:
             npzfiles = npzfiles[:n_files]
 
-        subject_files = []
-        for idx, f in enumerate(allfiles):
-            if self.fold_idx < 10:
-                pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]E0\.npz$".format(self.fold_idx))
-            else:
-                pattern = re.compile("[a-zA-Z0-9]*{}[1-9]E0\.npz$".format(self.fold_idx))
-            if pattern.match(f):
-                subject_files.append(os.path.join(self.data_dir, f))
+        # subject_files = []
+        # for idx, f in enumerate(allfiles):
+        #     if self.fold_idx < 10:
+        #         pattern = re.compile("[a-zA-Z0-9]*0{}[1-9]E0\.npz$".format(self.fold_idx))
+        #     else:
+        #         pattern = re.compile("[a-zA-Z0-9]*{}[1-9]E0\.npz$".format(self.fold_idx))
+        #     if pattern.match(f):
+        #         subject_files.append(os.path.join(self.data_dir, f))
+        #
+        # train_files = list(set(npzfiles) - set(subject_files))
+        # train_files.sort()
+        # subject_files.sort()
+        #
+        # # Load training and validation sets
+        # print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
+        # print("Load training set:")
+        # data_train, label_train = self._load_npz_list_files(train_files)
+        # print(" ")
+        # print("Load validation set:")
+        # data_val, label_val = self._load_npz_list_files(subject_files)
+        # print(" ")
 
-        train_files = list(set(npzfiles) - set(subject_files))
-        train_files.sort()
-        subject_files.sort()
-
-        # Load training and validation sets
-        print("\n========== [Fold-{}] ==========\n".format(self.fold_idx))
-        print("Load training set:")
-        data_train, label_train = self._load_npz_list_files(train_files)
-        print(" ")
-        print("Load validation set:")
-        data_val, label_val = self._load_npz_list_files(subject_files)
-        print(" ")
+        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
 
         print("Training set: n_subjects={}".format(len(data_train)))
         n_train_examples = 0
