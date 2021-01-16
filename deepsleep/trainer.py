@@ -13,7 +13,7 @@ import tensorflow as tf
 from sklearn.metrics import confusion_matrix, f1_score, cohen_kappa_score
 
 from deepsleep.data_loader import NonSeqDataLoader, SeqDataLoader
-from deepsleep.model import DeepFeatureNet, MultiChannelDeepFeatureNet, DeepSleepNet
+from deepsleep.model import DeepFeatureNet, MultiChannelDeepFeatureNet, DeepSleepNet, Seq2SeqNet
 from deepsleep.optimize import adam, adam_clipping_list_lr
 from deepsleep.utils import iterate_minibatches, iterate_batch_seq_minibatches
 
@@ -828,4 +828,343 @@ class DeepSleepNetTrainer(Trainer):
                     print("Saved trained parameters ({:.3f} sec)".format(duration))
         
         print("Finish fine-tuning")
+        return os.path.join(output_dir, "params_fold{}.npz".format(self.fold_idx))
+
+
+class Seq2SeqNetTrainer(Trainer):
+
+    def __init__(
+            self,
+            data_dir,
+            output_dir,
+            n_folds,
+            fold_idx,
+            batch_size,
+            input_dims,
+            n_classes,
+            seq_length,
+            n_rnn_layers,
+            n_fc_layers,
+            return_last,
+            interval_plot_filter=50,
+            interval_save_model=100,
+            interval_print_cm=10
+    ):
+        super(self.__class__, self).__init__(
+            interval_plot_filter=interval_plot_filter,
+            interval_save_model=interval_save_model,
+            interval_print_cm=interval_print_cm
+        )
+
+        self.data_dir = data_dir
+        self.output_dir = output_dir
+        self.n_folds = n_folds
+        self.fold_idx = fold_idx
+        self.batch_size = batch_size
+        self.input_dims = input_dims
+        self.n_classes = n_classes
+        self.seq_length = seq_length
+        self.n_rnn_layers = n_rnn_layers
+        self.n_fc_layers = n_fc_layers
+        self.return_last = return_last
+
+    def _run_epoch(self, sess, network, inputs, targets, train_op, is_train):
+        start_time = time.time()
+        y = []
+        y_true = []
+        total_loss, n_batches = 0.0, 0
+        for sub_idx, each_data in enumerate(zip(inputs, targets)):
+            each_x, each_y = each_data
+
+            # # Initialize state of LSTM - Unidirectional LSTM
+            # state = sess.run(network.initial_state)
+
+            # Initialize state of LSTM - Bidirectional LSTM
+            fw_state = sess.run(network.fw_initial_state)
+            bw_state = sess.run(network.bw_initial_state)
+
+            for x_batch, y_batch in iterate_batch_seq_minibatches(inputs=each_x,
+                                                                  targets=each_y,
+                                                                  batch_size=self.batch_size,
+                                                                  seq_length=self.seq_length):
+                feed_dict = {
+                    network.input_var: x_batch,
+                    network.target_var: y_batch
+                }
+
+                # Unidirectional LSTM
+                # for i, (c, h) in enumerate(network.initial_state):
+                #     feed_dict[c] = state[i].c
+                #     feed_dict[h] = state[i].h
+
+                # _, loss_value, y_pred, state = sess.run(
+                #     [train_op, network.loss_op, network.pred_op, network.final_state],
+                #     feed_dict=feed_dict
+                # )
+
+                for i, (c, h) in enumerate(network.fw_initial_state):
+                    feed_dict[c] = fw_state[i].c
+                    feed_dict[h] = fw_state[i].h
+
+                for i, (c, h) in enumerate(network.bw_initial_state):
+                    feed_dict[c] = bw_state[i].c
+                    feed_dict[h] = bw_state[i].h
+
+                _, loss_value, y_pred, fw_state, bw_state = sess.run(
+                    [train_op, network.loss_op, network.pred_op, network.fw_final_state, network.bw_final_state],
+                    feed_dict=feed_dict
+                )
+
+                total_loss += loss_value
+                n_batches += 1
+                y.append(y_pred)
+                y_true.append(y_batch)
+
+                # Check the loss value
+                assert not np.isnan(loss_value), \
+                    "Model diverged with loss = NaN"
+
+        duration = time.time() - start_time
+        total_loss /= n_batches
+        total_y_pred = np.hstack(y)
+        total_y_true = np.hstack(y_true)
+
+        return total_y_true, total_y_pred, total_loss, duration
+
+    def train(self, n_epochs, resume):
+        with tf.Graph().as_default(), tf.compat.v1.Session() as sess:
+            # Build training and validation networks
+            train_net = Seq2SeqNet(
+                batch_size=self.batch_size,
+                input_dims=self.input_dims,
+                n_classes=self.n_classes,
+                seq_length=self.seq_length,
+                n_rnn_layers=self.n_rnn_layers,
+                n_fc_layers=self.n_fc_layers,
+                return_last=self.return_last,
+                is_train=True,
+                reuse_params=False,
+                use_dropout=True
+            )
+            valid_net = Seq2SeqNet(
+                batch_size=self.batch_size,
+                input_dims=self.input_dims,
+                n_classes=self.n_classes,
+                seq_length=self.seq_length,
+                n_rnn_layers=self.n_rnn_layers,
+                n_fc_layers=self.n_fc_layers,
+                return_last=self.return_last,
+                is_train=False,
+                reuse_params=True,
+                use_dropout=True
+            )
+
+            # Initialize parameters
+            train_net.init_ops()
+            valid_net.init_ops()
+
+            print("Network (layers={})".format(len(train_net.activations)))
+            print("inputs ({}): {}".format(
+                train_net.input_var.name, train_net.input_var.get_shape()
+            ))
+            print("targets ({}): {}".format(
+                train_net.target_var.name, train_net.target_var.get_shape()
+            ))
+            for name, act in train_net.activations:
+                print("{} ({}): {}".format(name, act.name, act.get_shape()))
+            print(" ")
+
+            # Define optimization operations
+            train_op, grads_and_vars_op = adam(
+                loss=train_net.loss_op,
+                lr=1e-5,
+                train_vars=tf.compat.v1.trainable_variables()
+            )
+
+            # Make subdirectory for pretraining
+            output_dir = os.path.join(self.output_dir, "fold{}".format(self.fold_idx), train_net.name)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir)
+
+            # Global step for resume training
+            with tf.compat.v1.variable_scope(train_net.name) as scope:
+                global_step = tf.Variable(0, name="global_step", trainable=False)
+
+            # print "Trainable Variables:"
+            # for v in tf.compat.v1.trainable_variables():
+            #     print v.name, v.get_shape()
+            # print " "
+
+            # print "All Variables:"
+            # for v in tf.compat.v1.global_variables():
+            #     print v.name, v.get_shape()
+            # print " "
+
+            # Create a saver
+            saver = tf.compat.v1.train.Saver(tf.compat.v1.global_variables(), max_to_keep=0)
+
+            # Initialize variables in the graph
+            sess.run(tf.compat.v1.global_variables_initializer())
+
+            # Add the graph structure into the Tensorboard writer
+            train_summary_wrt = tf.compat.v1.summary.FileWriter(
+                os.path.join(output_dir, "train_summary"),
+                sess.graph
+            )
+
+            # Resume the training if applicable
+            if resume:
+                if os.path.exists(output_dir):
+                    if os.path.isfile(os.path.join(output_dir, "checkpoint")):
+                        # Restore the last checkpoint
+                        saver.restore(sess, tf.train.latest_checkpoint(output_dir))
+                        print("Model restored")
+                        print("[{}] Resume pre-training ...\n".format(datetime.now()))
+                    else:
+                        print("[{}] Start pre-training ...\n".format(datetime.now()))
+            else:
+                print("[{}] Start pre-training ...\n".format(datetime.now()))
+
+            # Load data
+            if sess.run(global_step) < n_epochs:
+                data_loader = SeqDataLoader(
+                    data_dir=self.data_dir,
+                    n_folds=self.n_folds,
+                    fold_idx=self.fold_idx
+                )
+                x_train, y_train, x_valid, y_valid = data_loader.load_train_data()
+
+                # Performance history
+                all_train_loss = np.zeros(n_epochs)
+                all_train_acc = np.zeros(n_epochs)
+                all_train_f1 = np.zeros(n_epochs)
+                all_train_kappa = np.zeros(n_epochs)
+                all_valid_loss = np.zeros(n_epochs)
+                all_valid_acc = np.zeros(n_epochs)
+                all_valid_f1 = np.zeros(n_epochs)
+                all_valid_kappa = np.zeros(n_epochs)
+
+            # Loop each epoch
+            for epoch in range(sess.run(global_step), n_epochs):
+                # # MONITORING
+                # print "BEFORE TRAINING"
+                # monitor_vars = [
+                #     "deepfeaturenet/l1_conv/bn/moving_mean:0",
+                #     "deepfeaturenet/l1_conv/bn/moving_variance:0"
+                # ]
+                # for n in monitor_vars:
+                #     v = tf.compat.v1.get_default_graph().get_tensor_by_name(n)
+                #     val = sess.run(v)
+                #     print "{}: {}, {}".format(n, val.shape, val[:5])
+
+                # Update parameters and compute loss of training set
+                y_true_train, y_pred_train, train_loss, train_duration = \
+                    self._run_epoch(
+                        sess=sess, network=train_net,
+                        inputs=x_train, targets=y_train,
+                        train_op=train_op,
+                        is_train=True
+                    )
+                n_train_examples = len(y_true_train)
+                train_cm = confusion_matrix(y_true_train, y_pred_train)
+                train_acc = np.mean(y_true_train == y_pred_train)
+                train_f1 = f1_score(y_true_train, y_pred_train, average="macro")
+                train_kappa = cohen_kappa_score(y_true_train, y_pred_train)
+
+                # # MONITORING
+                # print "AFTER TRAINING and BEFORE VALID"
+                # for n in monitor_vars:
+                #     v = tf.compat.v1.get_default_graph().get_tensor_by_name(n)
+                #     val = sess.run(v)
+                #     print "{}: {}, {}".format(n, val.shape, val[:5])
+
+                # Evaluate the model on the validation set
+                y_true_val, y_pred_val, valid_loss, valid_duration = \
+                    self._run_epoch(
+                        sess=sess, network=valid_net,
+                        inputs=x_valid, targets=y_valid,
+                        train_op=tf.no_op(),
+                        is_train=False
+                    )
+                n_valid_examples = len(y_true_val)
+                valid_cm = confusion_matrix(y_true_val, y_pred_val)
+                valid_acc = np.mean(y_true_val == y_pred_val)
+                valid_f1 = f1_score(y_true_val, y_pred_val, average="macro")
+                valid_kappa = cohen_kappa_score(y_true_val, y_pred_val)
+
+                # db.train_log(args={
+                #     "n_folds": self.n_folds,
+                #     "fold_idx": self.fold_idx,
+                #     "epoch": epoch,
+                #     "train_step": "pretraining",
+                #     "datetime": datetime.utcnow(),
+                #     "model": train_net.name,
+                #     "n_train_examples": n_train_examples,
+                #     "n_valid_examples": n_valid_examples,
+                #     "train_loss": train_loss,
+                #     "train_acc": train_acc,
+                #     "train_f1": train_f1,
+                #     "train_duration": train_duration,
+                #     "valid_loss": valid_loss,
+                #     "valid_acc": valid_acc,
+                #     "valid_f1": valid_f1,
+                #     "valid_duration": valid_duration,
+                # })
+
+                all_train_loss[epoch] = train_loss
+                all_train_acc[epoch] = train_acc
+                all_train_f1[epoch] = train_f1
+                all_train_kappa[epoch] = train_kappa
+                all_valid_loss[epoch] = valid_loss
+                all_valid_acc[epoch] = valid_acc
+                all_valid_f1[epoch] = valid_f1
+                all_valid_kappa[epoch] = valid_kappa
+
+                # Report performance
+                self.print_performance(
+                    sess, output_dir, train_net.name,
+                    n_train_examples, n_valid_examples,
+                    train_cm, valid_cm, epoch, n_epochs,
+                    train_duration, train_loss, train_acc, train_f1, train_kappa,
+                    valid_duration, valid_loss, valid_acc, valid_f1, valid_kappa
+                )
+
+                # Save performance history
+                np.savez(
+                    os.path.join(output_dir, "perf_fold{}.npz".format(self.fold_idx)),
+                    train_loss=all_train_loss, valid_loss=all_valid_loss,
+                    train_acc=all_train_acc, valid_acc=all_valid_acc,
+                    train_f1=all_train_f1, valid_f1=all_valid_f1,
+                    train_kappa=all_train_kappa, valid_kappa=all_valid_kappa,
+                    y_true_val=np.asarray(y_true_val),
+                    y_pred_val=np.asarray(y_pred_val)
+                )
+
+                # Save checkpoint
+                sess.run(tf.compat.v1.assign(global_step, epoch + 1))
+                if ((epoch + 1) % self.interval_save_model == 0) or ((epoch + 1) == n_epochs):
+                    start_time = time.time()
+                    save_path = os.path.join(
+                        output_dir, "model_fold{}.ckpt".format(self.fold_idx)
+                    )
+                    saver.save(sess, save_path, global_step=global_step)
+                    duration = time.time() - start_time
+                    print("Saved model checkpoint ({:.3f} sec)".format(duration))
+
+                # Save paramaters
+                if ((epoch + 1) % self.interval_save_model == 0) or ((epoch + 1) == n_epochs):
+                    start_time = time.time()
+                    save_dict = {}
+                    for v in tf.compat.v1.global_variables():
+                        save_dict[v.name] = sess.run(v)
+                    np.savez(
+                        os.path.join(
+                            output_dir,
+                            "params_fold{}.npz".format(self.fold_idx)),
+                        **save_dict
+                    )
+                    duration = time.time() - start_time
+                    print("Saved trained parameters ({:.3f} sec)".format(duration))
+
+        print("Finish pre-training")
         return os.path.join(output_dir, "params_fold{}.npz".format(self.fold_idx))

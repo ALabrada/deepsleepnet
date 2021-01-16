@@ -6,6 +6,7 @@ from deepsleep.sleep_stage import print_n_samples_each_class
 from deepsleep.utils import get_balance_class_oversample
 
 import re
+import csv
 
 
 class NonSeqDataLoader(object):
@@ -15,6 +16,30 @@ class NonSeqDataLoader(object):
         self.n_folds = n_folds
         self.fold_idx = fold_idx
 
+    def _load_csv_file(selfs, csv_file):
+        """Load data and labels from a csv file."""
+        with open(csv_file, 'r') as f:
+            reader = csv.reader(f, delimiter=',')
+            data = []
+            labels = []
+            for row in reader:
+                try:
+                    labels.append(int(row[0]))
+                    features = [float(x) for x in row[1:]]
+                    data.append(np.array(features, dtype=np.float))
+                except:
+                    pass
+
+            data = np.vstack(data)
+            mean = np.mean(data, axis=0)
+            stdev = np.std(data, axis=0)
+            data = (data - mean) / (3 * stdev)
+            data = (data + 1) / 2
+            data = np.maximum(0, np.minimum(data, 1))
+
+            labels = np.array(labels, dtype=np.int32)
+            return data, labels
+
     def _load_npz_file(self, npz_file):
         """Load data and labels from a npz file."""
         with np.load(npz_file) as f:
@@ -22,6 +47,20 @@ class NonSeqDataLoader(object):
             labels = f["y"]
             sampling_rate = f["fs"]
         return data, labels, sampling_rate
+
+    def _load_csv_list_files(self, csv_files):
+        """Load data and labels from list of csv files."""
+        data = []
+        labels = []
+        for csv_f in csv_files:
+            print("Loading {} ...".format(csv_f))
+            tmp_data, tmp_labels = self._load_csv_file(csv_f)
+            data.append(tmp_data)
+            labels.append(tmp_labels)
+        data = np.vstack(data)
+        labels = np.hstack(labels)
+        data = data[:, :, np.newaxis]
+        return data, labels
 
     def _load_npz_list_files(self, npz_files):
         """Load data and labels from list of npz files."""
@@ -41,23 +80,32 @@ class NonSeqDataLoader(object):
         labels = np.hstack(labels)
         return data, labels
 
-    def _load_cv_data(self, list_files):
+    def _load_cv_data(self, list_files, csv=False):
         """Load training and cross-validation sets."""
         # Split files for training and validation sets
         val_files = np.array_split(list_files, self.n_folds)
         train_files = np.setdiff1d(list_files, val_files[self.fold_idx])
 
-        # Load a npz file
-        print("Load training set:")
-        data_train, label_train = self._load_npz_list_files(train_files)
-        print(" ")
-        print("Load validation set:")
-        data_val, label_val = self._load_npz_list_files(val_files[self.fold_idx])
-        print(" ")
+        if csv:
+            # Load a csv file
+            print("Load training set:")
+            data_train, label_train = self._load_csv_list_files(train_files)
+            print(" ")
+            print("Load validation set:")
+            data_val, label_val = self._load_csv_list_files(val_files[self.fold_idx])
+            print(" ")
+        else:
+            # Load a npz file
+            print("Load training set:")
+            data_train, label_train = self._load_npz_list_files(train_files)
+            print(" ")
+            print("Load validation set:")
+            data_val, label_val = self._load_npz_list_files(val_files[self.fold_idx])
+            print(" ")
 
         # Reshape the data to match the input of the model - conv2d
-        data_train = np.squeeze(data_train)
-        data_val = np.squeeze(data_val)
+        # data_train = np.squeeze(data_train)
+        # data_val = np.squeeze(data_val)
         data_train = data_train[:, :, :, np.newaxis]
         data_val = data_val[:, :, :, np.newaxis]
 
@@ -77,6 +125,12 @@ class NonSeqDataLoader(object):
             if ".npz" in f:
                 npzfiles.append(os.path.join(self.data_dir, f))
         npzfiles.sort()
+
+        csvfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".csv" in f:
+                csvfiles.append(os.path.join(self.data_dir, f))
+        csvfiles.sort()
 
         # if n_files is not None:
         #     npzfiles = npzfiles[:n_files]
@@ -124,7 +178,10 @@ class NonSeqDataLoader(object):
         # data_val = data_val.astype(np.float32)
         # label_val = label_val.astype(np.int32)
 
-        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
+        if len(npzfiles) > 0:
+            data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles, csv=False)
+        else:
+            data_train, label_train, data_val, label_val = self._load_cv_data(csvfiles, csv=True)
 
         print("Training set: {}, {}".format(data_train.shape, label_train.shape))
         print_n_samples_each_class(label_train)
@@ -153,6 +210,11 @@ class NonSeqDataLoader(object):
             if ".npz" in f:
                 npzfiles.append(os.path.join(self.data_dir, f))
         npzfiles.sort()
+        csvfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".csv" in f:
+                csvfiles.append(os.path.join(self.data_dir, f))
+        csvfiles.sort()
 
         # subject_files = []
         # for idx, f in enumerate(allfiles):
@@ -177,7 +239,10 @@ class NonSeqDataLoader(object):
         # data_val = data_val.astype(np.float32)
         # label_val = label_val.astype(np.int32)
 
-        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
+        if len(npzfiles) > 0:
+            data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles, csv=False)
+        else:
+            data_train, label_train, data_val, label_val = self._load_cv_data(csvfiles, csv=True)
 
         return data_val, label_val
 
@@ -189,6 +254,30 @@ class SeqDataLoader(object):
         self.n_folds = n_folds
         self.fold_idx = fold_idx
 
+    def _load_csv_file(selfs, csv_file):
+        """Load data and labels from a csv file."""
+        with open(csv_file, 'r') as f:
+            reader = csv.reader(f, delimiter=',')
+            data = []
+            labels = []
+            for row in reader:
+                try:
+                    labels.append(int(row[0]))
+                    features = [float(x) for x in row[1:]]
+                    data.append(np.array(features, dtype=np.float))
+                except:
+                    pass
+
+            data = np.vstack(data)
+            mean = np.mean(data, axis=0)
+            stdev = np.std(data, axis=0)
+            data = (data - mean) / (3 * stdev)
+            data = (data + 1) / 2
+            data = np.maximum(0, np.minimum(data, 1))
+
+            labels = np.array(labels, dtype=np.int32)
+            return data, labels
+
     def _load_npz_file(self, npz_file):
         """Load data and labels from a npz file."""
         with np.load(npz_file) as f:
@@ -196,6 +285,27 @@ class SeqDataLoader(object):
             labels = f["y"]
             sampling_rate = f["fs"]
         return data, labels, sampling_rate
+
+    def _load_csv_list_files(self, csv_files):
+        """Load data and labels from list of csv files."""
+        data = []
+        labels = []
+        for csv_f in csv_files:
+            print("Loading {} ...".format(csv_f))
+            tmp_data, tmp_labels = self._load_csv_file(csv_f)
+
+            # Reshape the data to match the input of the model - conv2d
+            tmp_data = np.squeeze(tmp_data)
+            tmp_data = tmp_data[:, :, np.newaxis, np.newaxis]
+
+            # Casting
+            tmp_data = tmp_data.astype(np.float32)
+            tmp_labels = tmp_labels.astype(np.int32)
+
+            data.append(tmp_data)
+            labels.append(tmp_labels)
+
+        return data, labels
 
     def _load_npz_list_files(self, npz_files):
         """Load data and labels from list of npz files."""
@@ -226,19 +336,28 @@ class SeqDataLoader(object):
 
         return data, labels
 
-    def _load_cv_data(self, list_files):
+    def _load_cv_data(self, list_files, csv=False):
         """Load sequence training and cross-validation sets."""
         # Split files for training and validation sets
         val_files = np.array_split(list_files, self.n_folds)
         train_files = np.setdiff1d(list_files, val_files[self.fold_idx])
 
-        # Load a npz file
-        print("Load training set:")
-        data_train, label_train = self._load_npz_list_files(train_files)
-        print(" ")
-        print("Load validation set:")
-        data_val, label_val = self._load_npz_list_files(val_files[self.fold_idx])
-        print(" ")
+        if csv:
+            # Load a csv file
+            print("Load training set:")
+            data_train, label_train = self._load_csv_list_files(train_files)
+            print(" ")
+            print("Load validation set:")
+            data_val, label_val = self._load_csv_list_files(val_files[self.fold_idx])
+            print(" ")
+        else:
+            # Load a npz file
+            print("Load training set:")
+            data_train, label_train = self._load_npz_list_files(train_files)
+            print(" ")
+            print("Load validation set:")
+            data_val, label_val = self._load_npz_list_files(val_files[self.fold_idx])
+            print(" ")
 
         return data_train, label_train, data_val, label_val
 
@@ -250,6 +369,11 @@ class SeqDataLoader(object):
             if ".npz" in f:
                 npzfiles.append(os.path.join(self.data_dir, f))
         npzfiles.sort()
+        csvfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".csv" in f:
+                csvfiles.append(os.path.join(self.data_dir, f))
+        csvfiles.sort()
 
         # # Files for validation sets
         # val_files = np.array_split(npzfiles, self.n_folds)
@@ -260,7 +384,10 @@ class SeqDataLoader(object):
         # print("Load validation set:")
         # data_val, label_val = self._load_npz_list_files(val_files)
 
-        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
+        if len(npzfiles) > 0:
+            data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles, csv=False)
+        else:
+            data_train, label_train, data_val, label_val = self._load_cv_data(csvfiles, csv=True)
 
         return data_val, label_val
 
@@ -272,6 +399,11 @@ class SeqDataLoader(object):
             if ".npz" in f:
                 npzfiles.append(os.path.join(self.data_dir, f))
         npzfiles.sort()
+        csvfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".csv" in f:
+                csvfiles.append(os.path.join(self.data_dir, f))
+        csvfiles.sort()
 
         if n_files is not None:
             npzfiles = npzfiles[:n_files]
@@ -298,7 +430,10 @@ class SeqDataLoader(object):
         # data_val, label_val = self._load_npz_list_files(subject_files)
         # print(" ")
 
-        data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles)
+        if len(npzfiles) > 0:
+            data_train, label_train, data_val, label_val = self._load_cv_data(npzfiles, csv=False)
+        else:
+            data_train, label_train, data_val, label_val = self._load_cv_data(csvfiles, csv=True)
 
         print("Training set: n_subjects={}".format(len(data_train)))
         n_train_examples = 0
