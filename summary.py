@@ -7,7 +7,7 @@ import re
 
 import numpy as np
 
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix, f1_score, cohen_kappa_score
 
 from deepsleep.sleep_stage import W, N1, N2, N3, REM
 
@@ -76,11 +76,13 @@ def perf_overall(data_dir):
     cm = confusion_matrix(y_true, y_pred)
     acc = np.mean(y_true == y_pred)
     mf1 = f1_score(y_true, y_pred, average="macro")
+    kappa = cohen_kappa_score(y_true, y_pred)
 
     total = np.sum(cm, axis=1)
 
     print("DeepSleepNet (current)")
     print_performance(cm)
+    print("Kappa: {}".format(kappa))
 
 
 def main():

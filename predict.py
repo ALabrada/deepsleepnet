@@ -17,7 +17,7 @@ from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.util import nest
 
 from deepsleep.data_loader import SeqDataLoader
-from deepsleep.model import DeepSleepNet
+from deepsleep.model import DeepSleepNet, Seq2SeqNet
 from deepsleep.nn import *
 from deepsleep.sleep_stage import (NUM_CLASSES,
                                    EPOCH_SEC_LEN,
@@ -33,6 +33,8 @@ tf.app.flags.DEFINE_string('model_dir', 'output',
                            """Directory where to load trained models.""")
 tf.app.flags.DEFINE_integer('n_channels', 1,
                            """Number of input channels.""")
+tf.app.flags.DEFINE_integer('n_features', 0,
+                           """Number of features.""")
 tf.app.flags.DEFINE_string('output_dir', 'output',
                            """Directory where to save outputs.""")
 
@@ -367,6 +369,7 @@ class CustomDeepSleepNet(DeepSleepNet):
         self.return_last = return_last
 
         self.use_dropout_sequence = use_dropout_sequence
+        self.rnn_cell_size = 512
 
     def build_model(self, input_var):
         # Create a network with superclass method
@@ -402,7 +405,7 @@ class CustomDeepSleepNet(DeepSleepNet):
 
         # Bidirectional LSTM network
         name = "l{}_bi_lstm".format(self.layer_idx)
-        hidden_size = 512   # will output 1024 (512 forward, 512 backward)
+        hidden_size = self.rnn_cell_size   # will output 1024 (512 forward, 512 backward)
         with tf.compat.v1.variable_scope(name) as scope:
 
             def lstm_cell():
@@ -474,6 +477,160 @@ class CustomDeepSleepNet(DeepSleepNet):
         return network
 
 
+class CustomSeq2SeqNet(Seq2SeqNet):
+
+    def __init__(
+            self,
+            batch_size,
+            input_dims,
+            n_classes,
+            seq_length,
+            n_rnn_layers,
+            n_fc_layers,
+            return_last,
+            is_train,
+            reuse_params,
+            use_dropout,
+    ):
+
+        super().__init__(
+            batch_size=batch_size,
+            input_dims=input_dims,
+            n_classes=n_classes,
+            seq_length=seq_length,
+            n_rnn_layers=n_rnn_layers,
+            n_fc_layers=n_fc_layers,
+            return_last=return_last,
+            is_train=is_train,
+            reuse_params=reuse_params,
+            use_dropout=use_dropout
+        )
+
+    def build_model(self, input_var):
+        # Reshape to remove extra dimensions
+        name = "l{}_reshape".format(self.layer_idx)
+        network = tf.reshape(input_var,
+                             shape=[-1, self.input_dims],
+                             name=name)
+        self.activations.append((name, network))
+        self.layer_idx += 1
+
+        # Residual (or shortcut) connection
+        output_conns = []
+
+        for i in range(0, self.n_fc_layers):
+            # Fully-connected to select some part of the output to add with the output from bi-directional LSTM
+            name = "l{}_fc".format(self.layer_idx)
+            with tf.compat.v1.variable_scope(name) as scope:
+                network = fc(name="fc", input_var=network, n_hiddens=self.fc_layer_size, bias=None, wd=0)
+                # network = batch_norm_new(name="bn", input_var=network, is_train=self.is_train)
+                # network = leaky_relu(name="leaky_relu", input_var=network)
+                network = tf.nn.relu(network, name="relu")
+            self.activations.append((name, network))
+            self.layer_idx += 1
+
+            # Dropout
+            if self.use_dropout_sequence:
+                name = "l{}_dropout".format(self.layer_idx)
+                if self.is_train:
+                    network = tf.nn.dropout(network, keep_prob=0.5, name=name)
+                else:
+                    network = tf.nn.dropout(network, keep_prob=1.0, name=name)
+                self.activations.append((name, network))
+            self.layer_idx += 1
+
+        ######################################################################
+
+        # Reshape the input from (batch_size * seq_length, input_dim) to
+        # (batch_size, seq_length, input_dim)
+        name = "l{}_reshape_seq".format(self.layer_idx)
+        input_dim = self.fc_layer_size
+        seq_input = tf.reshape(network,
+                               shape=[-1, self.seq_length, input_dim],
+                               name=name)
+        assert self.batch_size == seq_input.get_shape()[0].value
+        self.activations.append((name, seq_input))
+        self.layer_idx += 1
+
+        # Bidirectional LSTM network
+        name = "l{}_bi_lstm".format(self.layer_idx)
+        hidden_size = self.rnn_cell_size  # will output 1024 (512 forward, 512 backward)
+        with tf.compat.v1.variable_scope(name) as scope:
+
+            def lstm_cell():
+
+                cell = tf.compat.v1.nn.rnn_cell.LSTMCell(hidden_size,
+                                                         use_peepholes=True,
+                                                         state_is_tuple=True,
+                                                         reuse=tf.compat.v1.get_variable_scope().reuse)
+                if self.use_dropout_sequence:
+                    keep_prob = 0.5 if self.is_train else 1.0
+                    cell = tf.compat.v1.nn.rnn_cell.DropoutWrapper(
+                        cell,
+                        output_keep_prob=keep_prob
+                    )
+
+                return cell
+
+            fw_cell = tf.compat.v1.nn.rnn_cell.MultiRNNCell([lstm_cell() for _ in range(self.n_rnn_layers)],
+                                                            state_is_tuple=True)
+            bw_cell = tf.compat.v1.nn.rnn_cell.MultiRNNCell([lstm_cell() for _ in range(self.n_rnn_layers)],
+                                                            state_is_tuple=True)
+
+            # Initial state of RNN
+            self.fw_initial_state = fw_cell.zero_state(self.batch_size, tf.float32)
+            self.bw_initial_state = bw_cell.zero_state(self.batch_size, tf.float32)
+
+            # Feedforward to MultiRNNCell
+            # list_rnn_inputs = tf.unstack(seq_input, axis=1)
+            # outputs, fw_state, bw_state = tf.nn.bidirectional_rnn(
+            list_rnn_inputs = tf.unstack(seq_input, axis=1)
+            outputs, fw_state, bw_state, fw_states, bw_states = custom_bidirectional_rnn(
+                cell_fw=fw_cell,
+                cell_bw=bw_cell,
+                inputs=list_rnn_inputs,
+                initial_state_fw=self.fw_initial_state,
+                initial_state_bw=self.bw_initial_state
+            )
+
+            if self.return_last:
+                network = outputs[-1]
+            else:
+                network = tf.reshape(tf.concat(axis=1, values=outputs), [-1, hidden_size * 2],
+                                     name=name)
+            self.activations.append((name, network))
+            self.layer_idx += 1
+
+            self.fw_final_state = fw_state
+            self.bw_final_state = bw_state
+
+            self.fw_states = fw_states
+            self.bw_states = bw_states
+
+        # Append output
+        output_conns.append(network)
+
+        ######################################################################
+
+        # Add
+        # name = "l{}_add".format(self.layer_idx)
+        # network = tf.add_n(output_conns, name=name)
+        # self.activations.append((name, network))
+        # self.layer_idx += 1
+
+        # Dropout
+        if self.use_dropout_sequence:
+            name = "l{}_dropout".format(self.layer_idx)
+            if self.is_train:
+                network = tf.nn.dropout(network, keep_prob=0.5, name=name)
+            else:
+                network = tf.nn.dropout(network, keep_prob=1.0, name=name)
+            self.activations.append((name, network))
+        self.layer_idx += 1
+
+        return network
+
+
 def custom_run_epoch(
     sess, 
     network, 
@@ -504,7 +661,7 @@ def custom_run_epoch(
         n_all_data = len(each_x)
         extra = n_all_data % network.seq_length
         n_data = n_all_data - extra
-        cell_size = 512
+        cell_size = network.rnn_cell_size
         fw_memory_cells = np.zeros((n_data, network.n_rnn_layers, cell_size))
         bw_memory_cells = np.zeros((n_data, network.n_rnn_layers, cell_size))
         seq_idx = 0
@@ -595,6 +752,7 @@ def predict(
     data_dir, 
     model_dir,
     n_channels,
+    n_features,
     output_dir, 
     n_subjects, 
     n_subjects_per_fold
@@ -606,19 +764,33 @@ def predict(
     # The model will be built into the default Graph
     with tf.Graph().as_default(), tf.compat.v1.Session() as sess:
         # Build the network
-        valid_net = CustomDeepSleepNet(
-            batch_size=1, 
-            input_dims=EPOCH_SEC_LEN*100,
-            n_channels=n_channels,
-            n_classes=NUM_CLASSES, 
-            seq_length=25,
-            n_rnn_layers=2,
-            return_last=False,
-            is_train=False, 
-            reuse_params=False, 
-            use_dropout_feature=True, 
-            use_dropout_sequence=True
-        )
+        if n_features:
+            valid_net = CustomSeq2SeqNet(
+                batch_size=1,
+                input_dims=n_features,
+                n_classes=NUM_CLASSES,
+                seq_length=10,
+                n_rnn_layers=2,
+                n_fc_layers=2,
+                return_last=False,
+                is_train=False,
+                reuse_params=False,
+                use_dropout=True,
+            )
+        else:
+            valid_net = CustomDeepSleepNet(
+                batch_size=1,
+                input_dims=EPOCH_SEC_LEN * 100,
+                n_channels=n_channels,
+                n_classes=NUM_CLASSES,
+                seq_length=5,
+                n_rnn_layers=2,
+                return_last=False,
+                is_train=False,
+                reuse_params=False,
+                use_dropout_feature=True,
+                use_dropout_sequence=True
+            )
 
         # Initialize parameters
         valid_net.init_ops()
@@ -629,7 +801,7 @@ def predict(
             checkpoint_path = os.path.join(
                 model_dir, 
                 "fold{}".format(fold_idx), 
-                "deepsleepnet"
+                valid_net.name
             )
 
             if not os.path.exists(checkpoint_path):
@@ -641,10 +813,15 @@ def predict(
             print("Model restored from: {}\n".format(tf.train.latest_checkpoint(checkpoint_path)))
 
             # Load testing data
-            x, y = SeqDataLoader.load_subject_data(
-                data_dir=data_dir, 
-                subject_idx=subject_idx
-            )
+            # x, y = SeqDataLoader.load_subject_data(
+            #     data_dir=data_dir,
+            #     subject_idx=subject_idx
+            # )
+            loader = SeqDataLoader(
+                data_dir=data_dir,
+                n_folds=n_subjects,
+                fold_idx=subject_idx)
+            x, y = loader.load_test_data()
 
             # Loop each epoch
             print("[{}] Predicting ...\n".format(datetime.now()))
@@ -701,12 +878,13 @@ def main(argv=None):
     if not os.path.exists(FLAGS.output_dir):
         os.makedirs(FLAGS.output_dir)
 
-    n_subjects = 20
+    n_subjects = 10
     n_subjects_per_fold = 1
     predict(
         data_dir=FLAGS.data_dir,
         model_dir=FLAGS.model_dir,
         n_channels=FLAGS.n_channels,
+        n_features=FLAGS.n_features,
         output_dir=FLAGS.output_dir,
         n_subjects=n_subjects,
         n_subjects_per_fold=n_subjects_per_fold

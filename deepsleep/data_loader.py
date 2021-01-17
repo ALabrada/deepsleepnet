@@ -361,7 +361,31 @@ class SeqDataLoader(object):
 
         return data_train, label_train, data_val, label_val
 
+    def load_data(self):
+        # Remove non-mat files, and perform ascending sort
+        allfiles = os.listdir(self.data_dir)
+        npzfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".npz" in f:
+                npzfiles.append(os.path.join(self.data_dir, f))
+        npzfiles.sort()
+        csvfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".csv" in f:
+                csvfiles.append(os.path.join(self.data_dir, f))
+        csvfiles.sort()
+
+        if len(npzfiles) > 0:
+            data, label = self._load_csv_list_files(npzfiles)
+        else:
+            data, label = self._load_csv_list_files(csvfiles)
+
+        return data, label
+
     def load_test_data(self):
+        if self.n_folds <= 1:
+            return self.load_data()
+        
         # Remove non-mat files, and perform ascending sort
         allfiles = os.listdir(self.data_dir)
         npzfiles = []

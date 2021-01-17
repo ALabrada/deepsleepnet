@@ -328,6 +328,7 @@ class DeepSleepNet(MultiChannelDeepFeatureNet):
         self.return_last = return_last
 
         self.use_dropout_sequence = use_dropout_sequence
+        self.rnn_cell_size = 512
 
     def _build_placeholder(self):
         # Input
@@ -379,7 +380,7 @@ class DeepSleepNet(MultiChannelDeepFeatureNet):
 
         # Bidirectional LSTM network
         name = "l{}_bi_lstm".format(self.layer_idx)
-        hidden_size = 512   # will output 1024 (512 forward, 512 backward)
+        hidden_size = self.rnn_cell_size   # will output 1024 (512 forward, 512 backward)
         with tf.compat.v1.variable_scope(name) as scope:
 
             def lstm_cell():
@@ -535,6 +536,8 @@ class Seq2SeqNet(object):
         self.return_last = return_last
 
         self.use_dropout_sequence = use_dropout
+        self.rnn_cell_size = 256
+        self.fc_layer_size = 512
 
     def _build_placeholder(self):
         # Input
@@ -552,7 +555,13 @@ class Seq2SeqNet(object):
         )
 
     def build_model(self, input_var):
-        network = input_var
+        # Reshape to remove extra dimensions
+        name = "l{}_reshape".format(self.layer_idx)
+        network = tf.reshape(input_var,
+                             shape=[-1, self.input_dims],
+                             name=name)
+        self.activations.append((name, network))
+        self.layer_idx += 1
 
         # Residual (or shortcut) connection
         output_conns = []
@@ -561,11 +570,11 @@ class Seq2SeqNet(object):
             # Fully-connected to select some part of the output to add with the output from bi-directional LSTM
             name = "l{}_fc".format(self.layer_idx)
             with tf.compat.v1.variable_scope(name) as scope:
-                output_tmp = fc(name="fc", input_var=network, n_hiddens=512, bias=None, wd=0)
-                # output_tmp = batch_norm_new(name="bn", input_var=output_tmp, is_train=self.is_train)
-                # output_tmp = leaky_relu(name="leaky_relu", input_var=output_tmp)
-                output_tmp = tf.nn.relu(output_tmp, name="relu")
-            self.activations.append((name, output_tmp))
+                network = fc(name="fc", input_var=network, n_hiddens=self.fc_layer_size, bias=None, wd=0)
+                # network = batch_norm_new(name="bn", input_var=network, is_train=self.is_train)
+                # network = leaky_relu(name="leaky_relu", input_var=network)
+                network = tf.nn.relu(network, name="relu")
+            self.activations.append((name, network))
             self.layer_idx += 1
 
             # Dropout
@@ -583,8 +592,9 @@ class Seq2SeqNet(object):
         # Reshape the input from (batch_size * seq_length, input_dim) to
         # (batch_size, seq_length, input_dim)
         name = "l{}_reshape_seq".format(self.layer_idx)
+        input_dim = self.fc_layer_size
         seq_input = tf.reshape(network,
-                               shape=[-1, self.seq_length, self.input_dims],
+                               shape=[-1, self.seq_length, input_dim],
                                name=name)
         assert self.batch_size == seq_input.get_shape()[0].value
         self.activations.append((name, seq_input))
@@ -592,7 +602,7 @@ class Seq2SeqNet(object):
 
         # Bidirectional LSTM network
         name = "l{}_bi_lstm".format(self.layer_idx)
-        hidden_size = 256  # will output 1024 (512 forward, 512 backward)
+        hidden_size = self.rnn_cell_size  # will output 1024 (512 forward, 512 backward)
         with tf.compat.v1.variable_scope(name) as scope:
 
             def lstm_cell():
