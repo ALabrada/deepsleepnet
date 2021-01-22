@@ -3,7 +3,7 @@ import os
 import numpy as np
 
 from deepsleep.sleep_stage import print_n_samples_each_class
-from deepsleep.utils import get_balance_class_oversample
+from deepsleep.utils import get_balance_class_oversample, get_balance_class_downsample
 
 import re
 import csv
@@ -117,7 +117,41 @@ class NonSeqDataLoader(object):
 
         return data_train, label_train, data_val, label_val
 
+    def load_data(self):
+        # Remove non-mat files, and perform ascending sort
+        allfiles = os.listdir(self.data_dir)
+        npzfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".npz" in f:
+                npzfiles.append(os.path.join(self.data_dir, f))
+        npzfiles.sort()
+
+        csvfiles = []
+        for idx, f in enumerate(allfiles):
+            if ".csv" in f:
+                csvfiles.append(os.path.join(self.data_dir, f))
+        csvfiles.sort()
+
+        if len(npzfiles) > 0:
+            data, label = self._load_npz_list_files(npzfiles)
+        else:
+            data, label = self._load_csv_list_files(csvfiles)
+
+        # Reshape the data to match the input of the model - conv2d
+        data = data[:, :, :, np.newaxis]
+
+        # Casting
+        data = data.astype(np.float32)
+        label = label.astype(np.int32)
+
+        return data, label
+
     def load_train_data(self, n_files=None):
+        if self.n_folds <= 1:
+            data, label = self.load_data()
+            data, label = get_balance_class_oversample(x=data, y=label)
+            return data, label, np.empty((0, data.shape[1], data.shape[2], 1), dtype=np.float), np.empty((0,), dtype=np.int32)
+
         # Remove non-mat files, and perform ascending sort
         allfiles = os.listdir(self.data_dir)
         npzfiles = []
@@ -203,6 +237,9 @@ class NonSeqDataLoader(object):
         return x_train, y_train, data_val, label_val
 
     def load_test_data(self):
+        if self.n_folds <= 1:
+            return self.load_data()
+
         # Remove non-mat files, and perform ascending sort
         allfiles = os.listdir(self.data_dir)
         npzfiles = []
@@ -321,7 +358,7 @@ class SeqDataLoader(object):
                 raise Exception("Found mismatch in sampling rate.")
 
             # Reshape the data to match the input of the model - conv2d
-            tmp_data = np.squeeze(tmp_data)
+            # tmp_data = np.squeeze(tmp_data)
             tmp_data = tmp_data[:, :, :, np.newaxis]
             
             # # Reshape the data to match the input of the model - conv1d
@@ -376,7 +413,7 @@ class SeqDataLoader(object):
         csvfiles.sort()
 
         if len(npzfiles) > 0:
-            data, label = self._load_csv_list_files(npzfiles)
+            data, label = self._load_npz_list_files(npzfiles)
         else:
             data, label = self._load_csv_list_files(csvfiles)
 
@@ -416,6 +453,10 @@ class SeqDataLoader(object):
         return data_val, label_val
 
     def load_train_data(self, n_files=None):
+        if self.n_folds <= 1:
+            data, label = self.load_data()
+            return data, label, [], []
+
         # Remove non-mat files, and perform ascending sort
         allfiles = os.listdir(self.data_dir)
         npzfiles = []

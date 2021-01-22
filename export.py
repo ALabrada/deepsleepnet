@@ -24,21 +24,7 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
     )
 
     with tf.Graph().as_default(), tf.compat.v1.Session() as sess:
-        if n_channels > 0:
-            network = CustomDeepSleepNet(
-                batch_size=1,
-                input_dims=EPOCH_SEC_LEN * 100,
-                n_channels=n_channels,
-                n_classes=NUM_CLASSES,
-                seq_length=5,
-                n_rnn_layers=2,
-                return_last=False,
-                is_train=False,
-                reuse_params=False,
-                use_dropout_feature=True,
-                use_dropout_sequence=True
-            )
-        else:
+        if n_features > 0:
             network = CustomSeq2SeqNet(
                 batch_size=1,
                 input_dims=n_features,
@@ -51,6 +37,20 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
                 reuse_params=False,
                 use_dropout=True,
             )
+        else:
+            network = CustomDeepSleepNet(
+                batch_size=None,
+                input_dims=EPOCH_SEC_LEN * 100,
+                n_channels=n_channels,
+                n_classes=NUM_CLASSES,
+                seq_length=5,
+                n_rnn_layers=2,
+                return_last=False,
+                is_train=False,
+                reuse_params=False,
+                use_dropout_feature=True,
+                use_dropout_sequence=True
+            )
 
         # Initialize parameters
         network.init_ops()
@@ -58,7 +58,7 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
         checkpoint_path = os.path.join(
             model_dir,
             "fold{}".format(fold_idx),
-            "deepsleepnet"
+            network.name
         )
 
         # Restore the trained model
@@ -66,8 +66,8 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
         saver.restore(sess, tf.train.latest_checkpoint(checkpoint_path))
         print("Model restored from: {}\n".format(tf.train.latest_checkpoint(checkpoint_path)))
 
-        fw_state = sess.run(network.fw_initial_state)
-        bw_state = sess.run(network.bw_initial_state)
+        # fw_state = sess.run(network.fw_initial_state)
+        # bw_state = sess.run(network.bw_initial_state)
 
         print('Exporting trained model to', export_path)
         builder = tf.compat.v1.saved_model.builder.SavedModelBuilder(export_path)

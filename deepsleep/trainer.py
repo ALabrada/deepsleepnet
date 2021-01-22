@@ -209,9 +209,13 @@ class DeepFeatureNetTrainer(Trainer):
                 "Model diverged with loss = NaN"
 
         duration = time.time() - start_time
-        total_loss /= n_batches
-        total_y_pred = np.hstack(y)
-        total_y_true = np.hstack(y_true)
+        if n_batches > 0:
+            total_loss /= n_batches
+            total_y_pred = np.hstack(y)
+            total_y_true = np.hstack(y_true)
+        else:
+            total_y_pred = np.empty((0,), dtype=np.int32)
+            total_y_true = np.empty((0,), dtype=np.int32)
 
         return total_y_true, total_y_pred, total_loss, duration
 
@@ -547,9 +551,13 @@ class DeepSleepNetTrainer(Trainer):
                     "Model diverged with loss = NaN"
 
         duration = time.time() - start_time
-        total_loss /= n_batches
-        total_y_pred = np.hstack(y)
-        total_y_true = np.hstack(y_true)
+        if n_batches > 0:
+            total_loss /= n_batches
+            total_y_pred = np.hstack(y)
+            total_y_true = np.hstack(y_true)
+        else:
+            total_y_pred = np.empty(shape=(0,), dtype=np.int32)
+            total_y_true = np.empty(shape=(0,), dtype=np.int32)
 
         return total_y_true, total_y_pred, total_loss, duration
 

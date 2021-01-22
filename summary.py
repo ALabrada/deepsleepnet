@@ -52,12 +52,12 @@ def perf_overall(data_dir):
         with np.load(fpath,allow_pickle=True) as f:
             print((f["y_true"].shape))
             if len(f["y_true"].shape) == 1:
-                if len(f["y_true"]) < 10:
-                    f_y_true = np.hstack(f["y_true"])
-                    f_y_pred = np.hstack(f["y_pred"])
-                else:
-                    f_y_true = f["y_true"]
-                    f_y_pred = f["y_pred"]
+                # if len(f["y_true"]) < 10:
+                f_y_true = np.hstack(f["y_true"])
+                f_y_pred = np.hstack(f["y_pred"])
+                # else:
+                #     f_y_true = f["y_true"]
+                #     f_y_pred = f["y_pred"]
             else:
                 f_y_true = f["y_true"].flatten()
                 f_y_pred = f["y_pred"].flatten()

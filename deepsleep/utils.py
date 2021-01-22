@@ -1,5 +1,7 @@
 import itertools
 import numpy as np
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import NearMiss
 
 
 def get_balance_class_downsample(x, y):
@@ -9,24 +11,33 @@ def get_balance_class_downsample(x, y):
         2. Randomly select samples in each class equal to that smallest number
     """
 
-    class_labels = np.unique(y)
-    n_min_classes = -1
-    for c in class_labels:
-        n_samples = len(np.where(y == c)[0])
-        if n_min_classes == -1:
-            n_min_classes = n_samples
-        elif n_min_classes > n_samples:
-            n_min_classes = n_samples
+    # class_labels = np.unique(y)
+    # n_min_classes = -1
+    # for c in class_labels:
+    #     n_samples = len(np.where(y == c)[0])
+    #     if n_min_classes == -1:
+    #         n_min_classes = n_samples
+    #     elif n_min_classes > n_samples:
+    #         n_min_classes = n_samples
+    #
+    # balance_x = []
+    # balance_y = []
+    # for c in class_labels:
+    #     idx = np.where(y == c)[0]
+    #     idx = np.random.permutation(idx)[:n_min_classes]
+    #     balance_x.append(x[idx])
+    #     balance_y.append(y[idx])
+    # balance_x = np.vstack(balance_x)
+    # balance_y = np.hstack(balance_y)
 
-    balance_x = []
-    balance_y = []
-    for c in class_labels:
-        idx = np.where(y == c)[0]
-        idx = np.random.permutation(idx)[:n_min_classes]
-        balance_x.append(x[idx])
-        balance_y.append(y[idx])
-    balance_x = np.vstack(balance_x)
-    balance_y = np.hstack(balance_y)
+    shape = x.shape
+    x = np.reshape(x, (shape[0], -1))
+
+    nr = NearMiss()
+    balance_x, balance_y = nr.fit_sample(x, y)
+
+    shape = [-1] + list(shape[1:])
+    balance_x = np.reshape(balance_x, shape)
 
     return balance_x, balance_y
 
@@ -44,25 +55,31 @@ def get_balance_class_oversample(x, y):
         if n_max_classes < n_samples:
             n_max_classes = n_samples
 
-    balance_x = []
-    balance_y = []
+    ids = []
     for c in class_labels:
         idx = np.where(y == c)[0]
         n_samples = len(idx)
         n_repeats = int(n_max_classes / n_samples)
-        tmp_x = np.repeat(x[idx], n_repeats, axis=0)
-        tmp_y = np.repeat(y[idx], n_repeats, axis=0)
-        n_remains = n_max_classes - len(tmp_x)
+        temp_ids = np.repeat(idx, n_repeats, axis=0)
+        n_remains = n_max_classes - len(temp_ids)
         if n_remains > 0:
             sub_idx = np.random.permutation(idx)[:n_remains]
-            tmp_x = np.vstack([tmp_x, x[sub_idx]])
-            tmp_y = np.hstack([tmp_y, y[sub_idx]])
-        balance_x.append(tmp_x)
-        balance_y.append(tmp_y)
-    balance_x = np.vstack(balance_x)
-    balance_y = np.hstack(balance_y)
+            temp_ids = np.hstack([temp_ids, sub_idx])
+        ids.append(temp_ids)
+    ids = np.hstack(ids)
+    x = x[ids, :, :, :]
+    y = y[ids]
 
-    return balance_x, balance_y
+    # shape = x.shape
+    # x = np.reshape(x, (shape[0], -1))
+    #
+    # smt = SMOTE()
+    # balance_x, balance_y = smt.fit_sample(x, y)
+    #
+    # shape = [-1] + list(shape[1:])
+    # balance_x = np.reshape(balance_x, shape)
+
+    return x, y
 
 
 def iterate_minibatches(inputs, targets, batch_size, shuffle=False):
