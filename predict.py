@@ -17,7 +17,7 @@ from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.util import nest
 
 from deepsleep.data_loader import SeqDataLoader
-from deepsleep.model import DeepSleepNet, Seq2SeqNet
+from deepsleep.model import DeepSleepNet, MultiChannelDeepFeatureNet, Seq2SeqNet
 from deepsleep.nn import *
 from deepsleep.sleep_stage import (NUM_CLASSES,
                                    EPOCH_SEC_LEN,
@@ -426,8 +426,8 @@ class CustomDeepSleepNet(DeepSleepNet):
             bw_cell = tf.compat.v1.nn.rnn_cell.MultiRNNCell([lstm_cell() for _ in range(self.n_rnn_layers)], state_is_tuple = True)
 
             # Initial state of RNN
-            self.fw_initial_state = fw_cell.zero_state(self.batch_size, tf.float32)
-            self.bw_initial_state = bw_cell.zero_state(self.batch_size, tf.float32)
+            self.fw_initial_state = fw_cell.zero_state(tf.shape(seq_input)[0], tf.float32)
+            self.bw_initial_state = bw_cell.zero_state(tf.shape(seq_input)[0], tf.float32)
 
             # Feedforward to MultiRNNCell
             list_rnn_inputs = tf.unstack(seq_input, axis=1)

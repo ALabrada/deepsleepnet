@@ -263,36 +263,11 @@ class MultiChannelDeepFeatureNet(DeepFeatureNet):
         )
 
     def build_model(self, input_var):
-        output_conns = []
+        input_var = tf.reshape(input_var, shape=(-1, self.input_dims, 1, self.n_channels))
 
-        for channel in range(self.n_channels):
-            input = input_var[:, :, channel, np.newaxis]
-
-            # Create a network with superclass method
-            network = super(MultiChannelDeepFeatureNet, self).build_model(
-                input_var=input
-            )
-            output_conns.append(network)
-
-        ######### Aggregate and link the channel CNNs #########
-
-        # Concat
-        name = "l{}_concat".format(self.layer_idx)
-        network = tf.concat(axis=1, values=output_conns, name=name)
-        self.activations.append((name, network))
-        self.layer_idx += 1
-
-        # Dropout
-        if self.use_dropout:
-            name = "l{}_dropout".format(self.layer_idx)
-            if self.is_train:
-                network = tf.nn.dropout(network, keep_prob=0.5, name=name)
-            else:
-                network = tf.nn.dropout(network, keep_prob=1.0, name=name)
-            self.activations.append((name, network))
-        self.layer_idx += 1
-
-        return network
+        return super(MultiChannelDeepFeatureNet, self).build_model(
+            input_var=input_var
+        )
 
 
 class DeepSleepNet(MultiChannelDeepFeatureNet):
@@ -333,15 +308,16 @@ class DeepSleepNet(MultiChannelDeepFeatureNet):
     def _build_placeholder(self):
         # Input
         name = "x_train" if self.is_train else "x_valid"
+        size = None if self.batch_size is None else self.batch_size*self.seq_length
         self.input_var = tf.compat.v1.placeholder(
             tf.float32, 
-            shape=[self.batch_size*self.seq_length, self.input_dims, self.n_channels, 1],
+            shape=[size, self.input_dims, self.n_channels, 1],
             name=name + "_inputs"
         )
         # Target
         self.target_var = tf.compat.v1.placeholder(
             tf.int32, 
-            shape=[self.batch_size*self.seq_length, ],
+            shape=[size, ],
             name=name + "_targets"
         )
 
@@ -475,13 +451,14 @@ class DeepSleepNet(MultiChannelDeepFeatureNet):
             ######### Compute loss #########
 
             # Weighted cross-entropy loss for a sequence of logits (per example)
+            batch_size = tf.shape(network)[0] if self.batch_size is None else self.batch_size
             loss = tf.contrib.legacy_seq2seq.sequence_loss_by_example(
                 [self.logits],
                 [self.target_var],
-                [tf.ones([self.batch_size * self.seq_length])],
+                [tf.ones([batch_size * self.seq_length])],
                 name="sequence_loss_by_example"
             )
-            loss = tf.reduce_sum(loss) / self.batch_size
+            loss = tf.reduce_sum(loss) / tf.cast(batch_size, tf.float32)
 
             # Regularization loss
             regular_loss = tf.add_n(
