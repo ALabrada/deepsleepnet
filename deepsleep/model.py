@@ -247,6 +247,10 @@ class MultiChannelDeepFeatureNet(DeepFeatureNet):
 
         self.n_channels = n_channels
 
+    def _conv1d_layer(self, input_var, filter_size, n_filters, stride, wd=0):
+        return super(MultiChannelDeepFeatureNet, self)._conv1d_layer(
+            input_var, filter_size, n_filters*self.n_channels, stride, wd=wd)
+
     def _build_placeholder(self):
         # Input
         name = "x_train" if self.is_train else "x_valid"
