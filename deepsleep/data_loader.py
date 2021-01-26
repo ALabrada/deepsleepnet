@@ -4,6 +4,7 @@ import numpy as np
 
 from deepsleep.sleep_stage import print_n_samples_each_class
 from deepsleep.utils import get_balance_class_oversample, get_balance_class_downsample
+from itertools import groupby
 
 import re
 import csv
@@ -83,7 +84,10 @@ class NonSeqDataLoader(object):
     def _load_cv_data(self, list_files, csv=False):
         """Load training and cross-validation sets."""
         # Split files for training and validation sets
-        val_files = np.array_split(list_files, self.n_folds)
+        grouped_files = [list(g) for k, g in groupby(list_files, key=lambda s: os.path.split(s)[-1][0:5])]
+        val_files = np.array_split(grouped_files, self.n_folds)
+        val_files = [np.hstack(fold) for fold in val_files]
+
         train_files = np.setdiff1d(list_files, val_files[self.fold_idx])
 
         if csv:
@@ -376,7 +380,10 @@ class SeqDataLoader(object):
     def _load_cv_data(self, list_files, csv=False):
         """Load sequence training and cross-validation sets."""
         # Split files for training and validation sets
-        val_files = np.array_split(list_files, self.n_folds)
+        grouped_files = [list(g) for k, g in groupby(list_files, key=lambda s: os.path.split(s)[-1][0:5])]
+        val_files = np.array_split(grouped_files, self.n_folds)
+        val_files = [np.hstack(fold) for fold in val_files]
+
         train_files = np.setdiff1d(list_files, val_files[self.fold_idx])
 
         if csv:
