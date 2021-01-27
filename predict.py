@@ -654,17 +654,18 @@ def custom_run_epoch(
         # state = sess.run(network.initial_state)
 
         # Initialize state of LSTM - Bidirectional LSTM
-        fw_state = sess.run(network.fw_initial_state)
-        bw_state = sess.run(network.bw_initial_state)
+        if hasattr(network, 'n_rnn_layers'):
+            fw_state = sess.run(network.fw_initial_state)
+            bw_state = sess.run(network.bw_initial_state)
 
-        # Prepare storage for memory cells
-        n_all_data = len(each_x)
-        extra = n_all_data % network.seq_length
-        n_data = n_all_data - extra
-        cell_size = network.rnn_cell_size
-        fw_memory_cells = np.zeros((n_data, network.n_rnn_layers, cell_size))
-        bw_memory_cells = np.zeros((n_data, network.n_rnn_layers, cell_size))
-        seq_idx = 0
+            # Prepare storage for memory cells
+            n_all_data = len(each_x)
+            extra = n_all_data % network.seq_length
+            n_data = n_all_data - extra
+            cell_size = network.rnn_cell_size
+            fw_memory_cells = np.zeros((n_data, network.n_rnn_layers, cell_size))
+            bw_memory_cells = np.zeros((n_data, network.n_rnn_layers, cell_size))
+            seq_idx = 0
 
         # Store prediction and actual stages of each patient
         each_y_true = []
@@ -689,28 +690,37 @@ def custom_run_epoch(
             #     feed_dict=feed_dict
             # )
 
-            for i, (c, h) in enumerate(network.fw_initial_state):
-                feed_dict[c] = fw_state[i].c
-                feed_dict[h] = fw_state[i].h
+            if hasattr(network, 'fw_initial_state'):
+                for i, (c, h) in enumerate(network.fw_initial_state):
+                    feed_dict[c] = fw_state[i].c
+                    feed_dict[h] = fw_state[i].h
 
-            for i, (c, h) in enumerate(network.bw_initial_state):
-                feed_dict[c] = bw_state[i].c
-                feed_dict[h] = bw_state[i].h
+            if hasattr(network, 'bw_initial_state'):
+                for i, (c, h) in enumerate(network.bw_initial_state):
+                    feed_dict[c] = bw_state[i].c
+                    feed_dict[h] = bw_state[i].h
 
-            _, loss_value, y_pred, fw_state, bw_state = sess.run(
-                [train_op, network.loss_op, network.pred_op, network.fw_final_state, network.bw_final_state],
-                feed_dict=feed_dict
-            )
+            if fw_state and bw_state:
+                _, loss_value, y_pred, fw_state, bw_state = sess.run(
+                    [train_op, network.loss_op, network.pred_op, network.fw_final_state, network.bw_final_state],
+                    feed_dict=feed_dict
+                )
 
-            # Extract memory cells
-            fw_states = sess.run(network.fw_states, feed_dict=feed_dict)
-            bw_states = sess.run(network.bw_states, feed_dict=feed_dict)
-            offset_idx = seq_idx * network.seq_length
-            for s_idx in range(network.seq_length):
-                for r_idx in range(network.n_rnn_layers):
-                    fw_memory_cells[offset_idx + s_idx][r_idx] = np.squeeze(fw_states[s_idx][r_idx].c)
-                    bw_memory_cells[offset_idx + s_idx][r_idx] = np.squeeze(bw_states[s_idx][r_idx].c)
-            seq_idx += 1
+                # Extract memory cells
+                fw_states = sess.run(network.fw_states, feed_dict=feed_dict)
+                bw_states = sess.run(network.bw_states, feed_dict=feed_dict)
+                offset_idx = seq_idx * network.seq_length
+                for s_idx in range(network.seq_length):
+                    for r_idx in range(network.n_rnn_layers):
+                        fw_memory_cells[offset_idx + s_idx][r_idx] = np.squeeze(fw_states[s_idx][r_idx].c)
+                        bw_memory_cells[offset_idx + s_idx][r_idx] = np.squeeze(bw_states[s_idx][r_idx].c)
+                seq_idx += 1
+            else:
+                _, loss_value, y_pred = sess.run(
+                    [train_op, network.loss_op, network.pred_op],
+                    feed_dict=feed_dict
+                )
+
             each_y_true.extend(y_batch)
             each_y_pred.extend(y_pred)
 
@@ -755,7 +765,8 @@ def predict(
     n_features,
     output_dir, 
     n_subjects, 
-    n_subjects_per_fold
+    n_subjects_per_fold,
+    n_rnn_layers=2
 ):
     # Ground truth and predictions
     y_true = []
@@ -777,7 +788,7 @@ def predict(
                 reuse_params=False,
                 use_dropout=True,
             )
-        else:
+        elif n_rnn_layers > 0:
             valid_net = CustomDeepSleepNet(
                 batch_size=1,
                 input_dims=EPOCH_SEC_LEN * 100,
@@ -790,6 +801,16 @@ def predict(
                 reuse_params=False,
                 use_dropout_feature=True,
                 use_dropout_sequence=True
+            )
+        else:
+            valid_net = MultiChannelDeepFeatureNet(
+                batch_size=None,
+                input_dims=EPOCH_SEC_LEN * 100,
+                n_channels=n_channels,
+                n_classes=NUM_CLASSES,
+                is_train=False,
+                reuse_params=False,
+                use_dropout=True
             )
 
         # Initialize parameters

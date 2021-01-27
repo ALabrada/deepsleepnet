@@ -1,6 +1,9 @@
 import os
+import shutil
 import tensorflow as tf
 from tensorflow.python.tools import freeze_graph
+from tensorflow.python import ops
+from tensorflow.tools.graph_transforms import TransformGraph
 
 from deepsleep.data_loader import SeqDataLoader
 from deepsleep.model import DeepSleepNet
@@ -9,14 +12,23 @@ from deepsleep.sleep_stage import (NUM_CLASSES,
                                    EPOCH_SEC_LEN,
                                    SAMPLING_RATE)
 from deepsleep.utils import iterate_batch_seq_minibatches
-from predict import CustomDeepSleepNet, CustomSeq2SeqNet
+from predict import CustomDeepSleepNet, CustomSeq2SeqNet, MultiChannelDeepFeatureNet
 from prepare_physionet import class_dict
 
 FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_integer('fold_idx', 0,
                             """Index of cross-validation fold to export.""")
 
-def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
+
+def get_graph_def_from_file(graph_filepath):
+    with ops.Graph().as_default():
+        with tf.gfile.GFile(graph_filepath, 'rb') as f:
+            graph_def = tf.GraphDef()
+            graph_def.ParseFromString(f.read())
+            return graph_def
+
+
+def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0, n_rnn_layers=2):
     export_path = os.path.join(
         tf.compat.as_bytes(output_dir),
         tf.compat.as_bytes("fold{}".format(fold_idx)),
@@ -37,7 +49,7 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
                 reuse_params=False,
                 use_dropout=True,
             )
-        else:
+        elif n_rnn_layers > 0:
             network = CustomDeepSleepNet(
                 batch_size=None,
                 input_dims=EPOCH_SEC_LEN * 100,
@@ -51,6 +63,16 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
                 use_dropout_feature=True,
                 use_dropout_sequence=True
             )
+        else:
+            network = MultiChannelDeepFeatureNet(
+                batch_size=None,
+                input_dims=EPOCH_SEC_LEN * 100,
+                n_channels=n_channels,
+                n_classes=NUM_CLASSES,
+                is_train=False,
+                reuse_params=False,
+                use_dropout=True
+            )
 
         # Initialize parameters
         network.init_ops()
@@ -60,6 +82,9 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
             "fold{}".format(fold_idx),
             network.name
         )
+
+        if os.path.exists(export_path):
+            shutil.rmtree(export_path, ignore_errors=True)
 
         # Restore the trained model
         saver = tf.compat.v1.train.Saver()
@@ -76,26 +101,28 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
 
         feed_dict = {'epochs': tf.compat.v1.saved_model.utils.build_tensor_info(network.input_var)}
 
-        for i, (c, h) in enumerate(network.fw_initial_state):
-            feed_dict['fw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
-            feed_dict['fw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
+        if n_rnn_layers > 0:
+            for i, (c, h) in enumerate(network.fw_initial_state):
+                feed_dict['fw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
+                feed_dict['fw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
 
-        for i, (c, h) in enumerate(network.bw_initial_state):
-            feed_dict['bw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
-            feed_dict['bw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
+            for i, (c, h) in enumerate(network.bw_initial_state):
+                feed_dict['bw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
+                feed_dict['bw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
 
         output_dict = {
             'stages': tf.compat.v1.saved_model.utils.build_tensor_info(network.pred_op),
             'logits': tf.compat.v1.saved_model.utils.build_tensor_info(network.logits)
         }
 
-        for i, (c, h) in enumerate(network.fw_final_state):
-            output_dict['fw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
-            output_dict['fw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
+        if n_rnn_layers > 0:
+            for i, (c, h) in enumerate(network.fw_final_state):
+                output_dict['fw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
+                output_dict['fw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
 
-        for i, (c, h) in enumerate(network.bw_final_state):
-            output_dict['bw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
-            output_dict['bw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
+            for i, (c, h) in enumerate(network.bw_final_state):
+                output_dict['bw_ltsm_{}_c'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(c)
+                output_dict['bw_ltsm_{}_h'.format(i)] = tf.compat.v1.saved_model.utils.build_tensor_info(h)
 
         prediction_signature = (
             tf.compat.v1.saved_model.signature_def_utils.build_signature_def(
@@ -113,16 +140,22 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
             strip_default_attrs=True)
 
         builder.save()
+        print("Exported to Saved Model format")
 
-        freeze_graph.freeze_graph(
+        output_file_name = network.name + ".pb"
+        inputs = [n.name.split(sep=':')[0] for n in feed_dict.values()]
+        outputs = [n.name.split(sep=':')[0] for n in output_dict.values()]
+
+        graph_def = freeze_graph.freeze_graph(
             input_graph=None,
             input_saver=False,
             input_binary=False,
             input_checkpoint=None,
-            output_node_names=",".join(map(lambda n: n.name.split(sep=':')[0], output_dict.values())),
+            output_node_names=",".join(outputs),
             restore_op_name=None,
             filename_tensor_name=None,
-            output_graph=os.path.join(tf.compat.as_bytes(output_dir), b'model.pb'),
+            # output_graph=os.path.join(tf.compat.as_bytes(output_dir), output_file_name.encode()),
+            output_graph=None,
             clear_devices=True,
             initializer_nodes="",
             variable_names_whitelist="",
@@ -130,6 +163,33 @@ def export(model_dir, fold_idx, output_dir, n_channels=1, n_features=0):
             input_meta_graph=False,
             input_saved_model_dir=export_path,
             saved_model_tags=tf.compat.v1.saved_model.tag_constants.SERVING)
+
+        print("Graph freezed!")
+
+        transforms = [
+            'remove_nodes(op=Identity)',
+            'merge_duplicate_nodes',
+            'fold_constants(ignore_errors=true)',
+            'fold_batch_norms',
+            'strip_unused_nodes',
+            # 'quantize_nodes',
+            # 'quantize_weights'
+        ]
+
+        graph_def = TransformGraph(
+            graph_def,
+            inputs,
+            outputs,
+            transforms)
+
+        print('Graph optimized!')
+
+        tf.train.write_graph(graph_def,
+                             as_text=False,
+                             logdir=output_dir,
+                             name=output_file_name)
+
+        print('Result saved to {}'.format(output_file_name))
 
 
 def main(argv=None):
